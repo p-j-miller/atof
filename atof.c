@@ -6,30 +6,54 @@
     	double fast_atof(const char *s,bool * not_number);
 		double fast_atof_nan(const char *s);// like fast_atof, but returns NAN if whole string is not a valid number
 		double fast_strtod(const char *s,char ** endptr);
-		float fast_strtof(const char *s,char **endptr); // if endptr != NULL returns 1st character thats not in the number
-		long double fast_strtold(const char *s,char **endptr); // if endptr != NULL returns 1st character thats not in the number
+		float fast_strtof(const char *s,char **endptr); // if endptr != NULL returns 1st character that's not in the number
+		long double fast_strtold(const char *s,char **endptr); // if endptr != NULL returns 1st character that's not in the number
 		__float128 fast_strtof128(const char *s,char **endptr); 
+    
+    Assumes ASCII character encoding (or a superset of it like utf-8) i.e.
+    	if d is '0'..'9' then assume 'd'-'0' gives 0..9
+    	letter | 0x20 = lowercase letter ('A'=0x41, 'a'=0x61, etc).
+		letters 'a' to 'z' are adjacent values (e.g. 'b'-'a'=1)
+		and '.' and '0' to '9' are all < 'A'
     
 	 The code should be robust to anything thrown at it (lots of leading of trailing zeros, extremely large numbers of digits, etc ).
 	 As well as floating point numbers this also accepts NAN and INF (case does not matter).
 	 21-10-2025 NAN's are now signed on output (previously the sign of a NAN was ignored).
 	 21-10-2025 returns INFINITY on overflow (previously might return NAN in this case).
 	 28-10-2025 supports float128 even if int128 is not available (uses u2_64.[ch] instead).
-	 12-11-2025 fast_strtold() added, some optmisations to fast_strtof128, and code tidied (e.g. int128 version of f128 removed as u2_64 version was the same speed and some compilers don't have int128 but do have float128).
+	 12-11-2025 fast_strtold() added, some optimisations to fast_strtof128, and code tidied (e.g. int128 version of f128 removed as u2_64 version was the same speed and some compilers don't have int128 but do have float128).
 	 29-11-2025 the only times NAN/INFINITY can be returned are when input is "nan" or "inf", otherwise we clip at 0/"DBL_MAX". 
 	 			This avoids issues with rounded up numbers very near "DBL_MAX" being returned as "inf".
 	 			The argument being that if the input is given as a number the user expects it to be interpreted as a number (even if its clipped), and also that this matches converting very small numbers as zero.
-	 18-1-2026 option (USE_RYU_FOR_POWERS10) to use ryu to convert 10's mantissa/exponent to ieee double - which is faster (see "Timings" below)
+	 18-1-2026 option (USE_RYU_FOR_POWERS10) to use Ryu to convert 10's mantissa/exponent to ieee double - which is faster (see "Timings" below)
+	 21-1-2026- githib 1v0 release
+	 28-1-2026  - strtof() optimised so it can use a single uint32_t (previously it could swap to a uint64_t which added complexity to the code) - this is faster and has be exhaustively tested using Ryo float->string (f2s.c)
+	 			- this also optimised nan/inf processing (taken out of critical path as well for the commonest case of processing numbers).
+	 			- same nan/inf processing used for doubles, LD and f128's
+				- my_isdigit() used in place of isdigit() and my_tolower() used in place of tolower() - these are both faster [ see assumptions above]
+	 			- compared Ryu s2f.c with fast_strtof() - Ryu was significantly slower (47.2ns/test vs 34.7ns/test for fast_strtof(), so no point in adding a Ryu option for fast_strtof().
+	 			- USE_RYU_FORL_POWERS10 renamed USE_RYU_FOR_DBL_POWERS10 to make it clear Ryu is only used for doubles
+				- strtof() rounds when given excess digits for %a format inputs
+				- Note test program in ya_sprintf corrected for %a tests on floats (previously created %a string from double rather than from float).
+				- optimisations from strtof() also done to strtod()
+				- USE_LD option to use long doubles in strtod() removed (it was accidentally disabled in the 1v0 release) as it can give results that are 1 bit in error (e.g. 1E126 where (double)1E126L !=1E126 ).
+				- there seemed to be no reason to keep double-double solution for strtod() other versions were faster so that was also deleted.
+	 25/3/2026  - strtod() conversion updated so its now faster than Ryu (uses dconvert.c/h) 
+				- NAN(n-char-sequenceopt) - from C99 (and better defined in C17) is now supported (but "n-char-sequenceopt" is just skipped in the input stream)
+	 25/3/2026 - ngithub 1v1 release
 	 
 	 As the name suggests its also written to be fast (much faster than the built in strtod or atof library functions at least for mingw64/UCRT ).
 	 Its round trip exact for doubles/long doubles or float128's  when used with ya_sprintf and the built in sprintf functions 
 	 ie if you start with a value, convert it to a string (with enough digits in it) and then use one of these functions you get exactly (bit wise) the same number as you started with.  
 
  Timings (Winlibs gcc 15.2.0, w64, average from test program on i3 10100 ):
-     MSVCRT strtod() - 2786ns/test
-   	 UCRT strtod()   - 527ns/test (5,3* faster)
-	 fast_strtod()	 - 187ns/test (14.9* faster MSVCRT, *2.8 faster than UCRT)
-	 fast_strtod+ryu - 112ns/test (24.9* faster MSVCRT, *4.7 vs UCRT, *1.7 vs fast_strtod())	
+     MSVCRT strtod() 	 - 2786ns/test
+   	 UCRT strtod()   	 - 527ns/test (5,3* faster)
+	 fast_strtod() 1v0	 - 187ns/test (14.9* faster MSVCRT, *2.8 faster than UCRT)
+	 fast_strtod+ryu 1v0 - 112ns/test (24.9* faster MSVCRT, *4.7 vs UCRT, *1.7 vs fast_strtod() 1v0)	
+	 fast_strtod (1v1) 	 - 64ns/test  (43.5* faster MSVCRT, *8.2 vs UCRT, *2.9 vs fast_strtod() 1v0 , *1.8 vs fast_strtod+ryu 1v0)
+	 
+	 fast_strtof()	 - 34.7ns/test (using Ryu f2s.c for float->string conversion - using sprintf() for float->string conversion is significantly slower as the float gets promoted to double and is processed by sprintf as a double - using the UCRT sprintf this gives 306.2ns/test)
 
  Note this code leverages (all available at https://github.com/p-j-miller )
 	ryu - from ya_sprintf
@@ -40,25 +64,16 @@
 	
  A test program for these functions is included in ya_sprintf - to compile this (from directory containing ya_sprintf):
  Under Windows using winlibs gcc 15.2.0 -
-  C:\winlibs\winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-13.0.0-r2\mingw64\bin\gcc -Wall -m64 -fexcess-precision=standard -Ofast  -std=gnu99 -I. main.c ../atof-and-ftoa/atof.c ../double-double/double-double.c ../u2_64-128bits-with-two-u64/u2_64.c ../my_printf/my_printf.c ../nan_type/nan_type.c ryu/d2fixed_ya_sprintf.c ryu/s2d_fast_atof.c ../hr_timer/hr_timer.c ../fma/fmaq.c -lquadmath -static -o test.exe
+  C:\winlibs\winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-13.0.0-r2\mingw64\bin\gcc -Wall -m64 -fexcess-precision=standard -Ofast  -std=gnu99 -I. -I../ya-sprintf/ main.c ../atof-and-ftoa/atof.c ../double-double/double-double.c ../u2_64-128bits-with-two-u64/u2_64.c ../ya-sprintf/ya-dconvert.c ../my_printf/my_printf.c ../nan_type/nan_type.c ../ya-sprintf/ryu/d2fixed_ya_sprintf.c ../ya-sprintf/ryu/s2d_fast_atof.c ../hr_timer/hr_timer.c ../fma/fmaq.c -lquadmath -static -o test.exe
  Under Linux -
-  gcc -m64 -Wall -Ofast -fexcess-precision=standard -I. -D_FORTIFY_SOURCE=1 main.c ../atof-and-ftoa/atof.c ../double-double/double-double.c ../u2_64-128bits-with-two-u64/u2_64.c ../my_printf/my_printf.c ../nan_type/nan_type.c ryu/d2fixed_ya_sprintf.c ryu/s2d_fast_atof.c ../hr_timer/hr_timer.c ../fma/fmaq.c -lquadmath -lm -o test
+  gcc -m64 -Wall -Ofast -fexcess-precision=standard -I. -I../ya-sprintf/ -D_FORTIFY_SOURCE=1 main.c ../atof-and-ftoa/atof.c ../double-double/double-double.c ../u2_64-128bits-with-two-u64/u2_64.c ../ya-sprintf/ya-dconvert.c ../my_printf/my_printf.c ../nan_type/nan_type.c ../ya-sprintf/ryu/d2fixed_ya_sprintf.c ../ya-sprintf/ryu/s2d_fast_atof.c ../hr_timer/hr_timer.c ../fma/fmaq.c -lquadmath -lm -o test
  */   
-#define USE_RYU_FOR_POWERS10 /* use ryu to convert to ieee format double - this is faster than other approaches (~74ns/test with the test program), but adds ~ 13kB to the code (mainly a large table) */
-
-#if LDBL_MANT_DIG>DBL_MANT_DIG && LDBL_MAX_EXP>=DBL_MAX_EXP && !defined(USE_RYU_FOR_POWERS10)
- #define USE_LD /* if defined use long double rather than pair of doubles for double conversions , if above requires more resolution in mantissa of LD and at least the same exponent range (i.e. avoids the case where LD=double)*/
-#endif
-#define AFormatSupport /* if defined then support numbers as generated by printf %a ie 0xh.hhhhp+/-d */
-#if defined(__SIZEOF_FLOAT128__)   && !defined(__BORLANDC__)      /* Builder C++ Community version 12.1 patch 1 defines __SIZEOF_FLOAT128__ but __float128's cannot be used in sensible programs due to compiler bugs */
- #define ATOF128 /* if defined add support for reading __float128 's */
-#endif
 
 
 /*----------------------------------------------------------------------------
  * MIT License:
  *
- * Copyright (c) 2020,2025 Peter Miller
+ * Copyright (c) 2020,2025,2026 Peter Miller
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -80,6 +95,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *--------------------------------------------------------------------------*/
 //#define DEBUG
+//#define RYU_I_POWER10 /* if defined use Ryu derived code for I*power10 [ for doubles only] - this is slower now */
 #if defined(DEBUG)
 #define __USE_MINGW_ANSI_STDIO 1   /* if this is defined then writing to stdout > NUL is VERY slow (70 secs vs 4 secs) ! Note strtof() etc are still much slower than fast_atof() etc */
 #include <stdio.h>
@@ -94,18 +110,39 @@
 #include <limits.h>
 #include <float.h> /* for limits for float, double , long double */
 #include "atof.h"
-#ifdef USE_RYU_FOR_POWERS10
+#include "../power10/table_bin_10.h" /* for double powers of 10 tables */
+#ifdef RYU_I_POWER10
  #include "../ya-sprintf/ryu/s2d_fast_atof.h"
+#else 
+ #include "../ya-sprintf/ya-dconvert.h" /* new I*power10 from ya_sprintf */
 #endif
 
 
+#define AFormatSupport /* if defined then support numbers as generated by printf %a ie 0xh.hhhhp+/-d */
+#if defined(__SIZEOF_FLOAT128__)   && !defined(__BORLANDC__)      /* Builder C++ Community version 12.1 patch 1 defines __SIZEOF_FLOAT128__ but __float128's cannot be used in sensible programs due to compiler bugs */
+ #define ATOF128 /* if defined add support for reading __float128 's */
+#endif
+
+#define nos_elements_in(x) (sizeof(x)/(sizeof(x[0]))) /* number of elements in x , max index is 1 less than this as we index 0... */
+
+static inline bool my_isdigit(char x) /* hopefully faster than isdigit() - but as importantly only returns true for 0..9 whereas isdigit could in theory change with the locale set */ 
+	{return x>='0' && x<='9';
+	}
+static inline char my_tolower(char x) /* this only works on letters (but it will not map a non-letter onto a letter) and assumes ASCII coding [or a superset of it like utf8] */
+	{return x|(uint8_t)0x20;
+	}	
+
 /* code below cannot be compiled with -Ofast as this makes the compiler break some C rules that we need (even use NAN etc) , so make sure of this here */
+/* code below cannot be compiled with -Ofast as this makes the compiler break some C rules that we need, so make sure of this here */
+/* we also need -msse2 and -mfpmath=sse to actually use the sse instructions for float and double maths */
+/* there seems to be no way to duplicate "-fexcess-precision=standard" using a pragma - so that must be present on the command line - to pass all f128_to_a tests -fexcess-precision=standard MUST be present on the command line with -Ofast */
 #if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7)) || defined(__clang__)
  #pragma GCC push_options
  #pragma GCC optimize ("-O3") /* cannot use Ofast, normally -O3 is OK. Note macro expansion does not work here ! */
- #if defined(_WIN32) && !defined(_WIN64)
-  #pragma GCC target("sse2")
- #endif
+ // based on  https://jdebp.uk/FGA/predefined-macros-processor.html "__i386__" is set by GCC,Clang,Intel which is good enough as the outer #if limits us to gcc and clang
+ #ifdef __i386__
+   #pragma GCC target("sse2,fpmath=sse") /* -msse2 and -mfpmath=sse */
+ #endif 
 #endif
 
 #ifdef __BORLANDC__
@@ -135,81 +172,6 @@ float fast_strtof(const char *s,char **endptr); // if endptr != NULL returns 1st
 static const int maxExponent = 308;	/* Largest possible base 10 for a double exponent. (must match array below) */
 static const int maxfExponent = 38;	/* Largest possible base 10 for a float exponent. (must match array below) */
 
-#ifdef USE_LD
-static long double const powersOf10[] = /* used for double input */
-                {
-                    1e0L,   1e1L,   1e2L,   1e3L,   1e4L,   1e5L,   1e6L,   1e7L,   1e8L,    1e9L,
-                    1e10L,  1e11L,  1e12L,  1e13L,  1e14L,  1e15L,  1e16L,  1e17L,  1e18L,  1e19L,
-                    1e20L,  1e21L,  1e22L,  1e23L,  1e24L,  1e25L,  1e26L,  1e27L,  1e28L,  1e29L,
-                    1e30L,  1e31L,  1e32L,  1e33L,  1e34L,  1e35L,  1e36L,  1e37L,  1e38L,  1e39L,
-                    1e40L,  1e41L,  1e42L,  1e43L,  1e44L,  1e45L,  1e46L,  1e47L,  1e48L,  1e49L,
-                    1e50L,  1e51L,  1e52L,  1e53L,  1e54L,  1e55L,  1e56L,  1e57L,  1e58L,  1e59L,
-                    1e60L,  1e61L,  1e62L,  1e63L,  1e64L,  1e65L,  1e66L,  1e67L,  1e68L,  1e69L,
-                    1e70L,  1e71L,  1e72L,  1e73L,  1e74L,  1e75L,  1e76L,  1e77L,  1e78L,  1e79L,
-                    1e80L,  1e81L,  1e82L,  1e83L,  1e84L,  1e85L,  1e86L,  1e87L,  1e88L,  1e89L,
-                    1e90L,  1e91L,  1e92L,  1e93L,  1e94L,  1e95L,  1e96L,  1e97L,  1e98L,  1e99L,
-                    1e100L, 1e101L, 1e102L, 1e103L, 1e104L, 1e105L, 1e106L, 1e107L, 1e108L, 1e109L,
-                    1e110L, 1e111L, 1e112L, 1e113L, 1e114L, 1e115L, 1e116L, 1e117L, 1e118L, 1e119L,
-                    1e120L, 1e121L, 1e122L, 1e123L, 1e124L, 1e125L, 1e126L, 1e127L, 1e128L, 1e129L,
-                    1e130L, 1e131L, 1e132L, 1e133L, 1e134L, 1e135L, 1e136L, 1e137L, 1e138L, 1e139L,
-                    1e140L, 1e141L, 1e142L, 1e143L, 1e144L, 1e145L, 1e146L, 1e147L, 1e148L, 1e149L,
-                    1e150L, 1e151L, 1e152L, 1e153L, 1e154L, 1e155L, 1e156L, 1e157L, 1e158L, 1e159L,
-                    1e160L, 1e161L, 1e162L, 1e163L, 1e164L, 1e165L, 1e166L, 1e167L, 1e168L, 1e169L,
-                    1e170L, 1e171L, 1e172L, 1e173L, 1e174L, 1e175L, 1e176L, 1e177L, 1e178L, 1e179L,
-                    1e180L, 1e181L, 1e182L, 1e183L, 1e184L, 1e185L, 1e186L, 1e187L, 1e188L, 1e189L,
-                    1e190L, 1e191L, 1e192L, 1e193L, 1e194L, 1e195L, 1e196L, 1e197L, 1e198L, 1e199L,
-                    1e200L, 1e201L, 1e202L, 1e203L, 1e204L, 1e205L, 1e206L, 1e207L, 1e208L, 1e209L,
-                    1e210L, 1e211L, 1e212L, 1e213L, 1e214L, 1e215L, 1e216L, 1e217L, 1e218L, 1e219L,
-                    1e220L, 1e221L, 1e222L, 1e223L, 1e224L, 1e225L, 1e226L, 1e227L, 1e228L, 1e229L,
-                    1e230L, 1e231L, 1e232L, 1e233L, 1e234L, 1e235L, 1e236L, 1e237L, 1e238L, 1e239L,
-                    1e240L, 1e241L, 1e242L, 1e243L, 1e244L, 1e245L, 1e246L, 1e247L, 1e248L, 1e249L,
-                    1e250L, 1e251L, 1e252L, 1e253L, 1e254L, 1e255L, 1e256L, 1e257L, 1e258L, 1e259L,
-                    1e260L, 1e261L, 1e262L, 1e263L, 1e264L, 1e265L, 1e266L, 1e267L, 1e268L, 1e269L,
-                    1e270L, 1e271L, 1e272L, 1e273L, 1e274L, 1e275L, 1e276L, 1e277L, 1e278L, 1e279L,
-                    1e280L, 1e281L, 1e282L, 1e283L, 1e284L, 1e285L, 1e286L, 1e287L, 1e288L, 1e289L,
-                    1e290L, 1e291L, 1e292L, 1e293L, 1e294L, 1e295L, 1e296L, 1e297L, 1e298L, 1e299L,
-                    1e300L, 1e301L, 1e302L, 1e303L, 1e304L, 1e305L, 1e306L, 1e307L, 1e308L
-                };
-
-#endif
-
-
-
-static double const dblpowersOf10[] = /* used for float input and for double input where the value is exact */
-
-                {
-                    1e0,   1e1,   1e2,   1e3,   1e4,   1e5,   1e6,   1e7,   1e8,    1e9,
-                    1e10,  1e11,  1e12,  1e13,  1e14,  1e15,  1e16,  1e17,  1e18,  1e19,
-                    1e20,  1e21,  1e22,  1e23,  1e24,  1e25,  1e26,  1e27,  1e28,  1e29,
-                    1e30,  1e31,  1e32,  1e33,  1e34,  1e35,  1e36,  1e37,  1e38,  1e39,
-                    1e40,  1e41,  1e42,  1e43,  1e44,  1e45,  1e46,  1e47,  1e48,  1e49,
-                    1e50,  1e51,  1e52,  1e53,  1e54,  1e55,  1e56,  1e57,  1e58,  1e59,
-                    1e60,  1e61,  1e62,  1e63,  1e64,  1e65,  1e66,  1e67,  1e68,  1e69,
-                    1e70,  1e71,  1e72,  1e73,  1e74,  1e75,  1e76,  1e77,  1e78,  1e79,
-                    1e80,  1e81,  1e82,  1e83,  1e84,  1e85,  1e86,  1e87,  1e88,  1e89,
-                    1e90,  1e91,  1e92,  1e93,  1e94,  1e95,  1e96,  1e97,  1e98,  1e99,
-                    1e100, 1e101, 1e102, 1e103, 1e104, 1e105, 1e106, 1e107, 1e108, 1e109,
-                    1e110, 1e111, 1e112, 1e113, 1e114, 1e115, 1e116, 1e117, 1e118, 1e119,
-                    1e120, 1e121, 1e122, 1e123, 1e124, 1e125, 1e126, 1e127, 1e128, 1e129,
-                    1e130, 1e131, 1e132, 1e133, 1e134, 1e135, 1e136, 1e137, 1e138, 1e139,
-                    1e140, 1e141, 1e142, 1e143, 1e144, 1e145, 1e146, 1e147, 1e148, 1e149,
-                    1e150, 1e151, 1e152, 1e153, 1e154, 1e155, 1e156, 1e157, 1e158, 1e159,
-                    1e160, 1e161, 1e162, 1e163, 1e164, 1e165, 1e166, 1e167, 1e168, 1e169,
-                    1e170, 1e171, 1e172, 1e173, 1e174, 1e175, 1e176, 1e177, 1e178, 1e179,
-                    1e180, 1e181, 1e182, 1e183, 1e184, 1e185, 1e186, 1e187, 1e188, 1e189,
-                    1e190, 1e191, 1e192, 1e193, 1e194, 1e195, 1e196, 1e197, 1e198, 1e199,
-                    1e200, 1e201, 1e202, 1e203, 1e204, 1e205, 1e206, 1e207, 1e208, 1e209,
-                    1e210, 1e211, 1e212, 1e213, 1e214, 1e215, 1e216, 1e217, 1e218, 1e219,
-                    1e220, 1e221, 1e222, 1e223, 1e224, 1e225, 1e226, 1e227, 1e228, 1e229,
-                    1e230, 1e231, 1e232, 1e233, 1e234, 1e235, 1e236, 1e237, 1e238, 1e239,
-                    1e240, 1e241, 1e242, 1e243, 1e244, 1e245, 1e246, 1e247, 1e248, 1e249,
-                    1e250, 1e251, 1e252, 1e253, 1e254, 1e255, 1e256, 1e257, 1e258, 1e259,
-                    1e260, 1e261, 1e262, 1e263, 1e264, 1e265, 1e266, 1e267, 1e268, 1e269,
-                    1e270, 1e271, 1e272, 1e273, 1e274, 1e275, 1e276, 1e277, 1e278, 1e279,
-                    1e280, 1e281, 1e282, 1e283, 1e284, 1e285, 1e286, 1e287, 1e288, 1e289,
-                    1e290, 1e291, 1e292, 1e293, 1e294, 1e295, 1e296, 1e297, 1e298, 1e299,
-                    1e300, 1e301, 1e302, 1e303, 1e304, 1e305, 1e306, 1e307, 1e308
-                };
 
 static float const fltpowersOf10[] = /* always float - used for float input where the value is exact  */
 
@@ -220,7 +182,7 @@ static float const fltpowersOf10[] = /* always float - used for float input wher
                     1e30f,  1e31f,  1e32f,  1e33f,  1e34f,  1e35f,  1e36f,  1e37f,  1e38f
                 };
                 
-static uint64_t u64powersOf10[]=
+static const uint64_t u64powersOf10[]=
 				{
 					UINT64_C(1), 	// 10^ 0
 					UINT64_C(10), 	// 10^1
@@ -244,7 +206,7 @@ static uint64_t u64powersOf10[]=
 					UINT64_C(10000000000000000000)  // 19  2^64=1.8446744073709551616e+19 so 10^19 should fit into a uint64
 				};
 
-static uint32_t u32powersOf10[]=
+static const uint32_t u32powersOf10[]=
 				{
 					UINT32_C(1), 	// 10^ 0
 					UINT32_C(10), 	// 10^1
@@ -255,7 +217,7 @@ static uint32_t u32powersOf10[]=
 					UINT32_C(1000000),// 6
 					UINT32_C(10000000),// 7
 					UINT32_C(100000000),// 8
-					UINT32_C(1000000000),// 9   [ largest possible 10^10 gives compiler error (overflow) ]
+					UINT32_C(1000000000),// 9   [ largest possible 10^10 gives compiler error (overflow) ], 2^32=4,294,967,296
 				};
 /*
  *----------------------------------------------------------------------
@@ -277,18 +239,11 @@ static uint32_t u32powersOf10[]=
  *
  *----------------------------------------------------------------------
  */
- static const int maxdigits=19; // see above this is the largest possible in a uint64 
+#define max_d_digits 19 // see above this is the largest possible in a uint64 
 
  
  double fast_strtod(const char *s,char **endptr) // if endptr != NULL returns 1st character thats not in the number
  {
- #ifdef USE_RYU_FOR_POWERS10
-  // no extra variables needed for this option
- #elif defined( USE_LD)	
-  long double dr;
- #else
-  double dh,dl; /* use double double instead of long double */ 
- #endif 
   bool sign=false,expsign=false,got_number=false;
   uint64_t r=0; // mantissa
   int32_t exp=0,rexp=0;
@@ -305,24 +260,75 @@ static uint32_t u32powersOf10[]=
   	{sign=true;
   	 ++s;
     }
-  // NAN is a special case - NAN is  signed in the input and keeps this on the output
-  if((*s=='n' || *s=='N') && (s[1]=='a' || s[1]=='A') && (s[2]=='n' || s[2]=='N'))
-  	{if(endptr!=NULL) *endptr=(char *)s+3;// 3 for NAN
-  	 if(sign) return -NAN;
-  	 return NAN;
-  	}    
-  // INF or Infinity is a special case - and is signed
-  if((*s=='i' || *s=='I') && (s[1]=='n' || s[1]=='N') && (s[2]=='f' || s[2]=='F'))
-  	{s+=3;// INF
-  	 if((*s=='i' || *s=='I') && (s[1]=='n' || s[1]=='N') && (s[2]=='i' || s[2]=='I') && (s[3]=='t' || s[3]=='T') && (s[4]=='y' || s[4]=='Y') )
-  	  	s+=5; // "Infinity" is 5 more chars (inity) than "inf"
-  	 if(endptr!=NULL) *endptr=(char *)s;
-  	 if(sign) return -INFINITY;
-  	 return INFINITY;
-  	}  
+  // this is the critical path - if the character is >'9' then it starts with a letter [ nan, inf ], note '.' is < '9'
+  if(*s>'9') 
+  	{// not a digit - work out what we have [off the critical path]
+	  // NAN is a special case - NAN is  signed in the input and keeps this on the output
+	  if(my_tolower(*s)=='n' && my_tolower(s[1])=='a' && my_tolower(s[2])=='n')
+	  	{/* For more information on NAN's see my nan_type repository.
+		  C99 allows nan to be followed by (...) , C17 7.22.1.3 says:
+	  	The expected form of the subject sequence is an optional plus or minus sign, then one of the
+		following:
+		....
+		— NAN or NAN(n-char-sequenceopt), ignoring case in the NAN part, where:
+		n-char-sequence:
+			digit
+			nondigit
+			n-char-sequence digit
+			n-char-sequence nondigit
+		The subject sequence is defined as the longest initial subsequence of the input string, starting with
+		the first non-white-space character, that is of the expected form. The subject sequence contains no
+		characters if the input string is not of the expected form.
+	 	
+	 	A character sequence NAN or NAN(n-char-sequenceopt) is interpreted as a quiet NaN, if
+		supported in the return type, else like a subject sequence part that does not have the expected form;
+		the meaning of the n-char sequence is implementation-defined.298) 
+	 
+	 	298)An implementation may use the n-char sequence to determine extra information to be represented in the NaN’s
+		significand.
+		
+		That that "nondigit" is defined in 6.4.2.1 as
+			nondigit: one of
+				_ a b c d e f g h i j k l m
+				n o p q r s t u v w x y z
+				A B C D E F G H I J K L M
+				N O P Q R S T U V W X Y Z
+			digit: one of
+				0 1 2 3 4 5 6 7 8 9	
+		 On Windows (UCRT) for floats 0XFFC00000 (-NAN) gives "-nan(ind)" [ or -NAN(IND) ] , nanf("") => nan=>0X7FC00000
+	  	*/
+	  	 s+=3;// skip NAN [ which is valid by its self ]
+	  	 const char *sn=s;// we now look forward to see if we have NAN(n-char-sequenceopt)
+	  	 if(*sn=='(')
+	  	 	{// ( optional n-char sequence then )  
+	  	 	 sn++; // skip (
+	  	 	 if(my_tolower(*sn)=='i' && my_tolower(sn[1])=='n' && my_tolower(sn[2])=='d' && sn[3]==')' )
+	  	 	 	{s+=5; // "(ind)" => special case (+5 as we have already skipped the "(" )
+	  	 	 	 if(endptr!=NULL) *endptr=(char *)s;
+	  	 	 	 return -NAN;// this is always -ve
+	  	 	 	}
+	  	 	 // not nan(ind) - look for any other pattern allowed by C99
+	  	 	 while(*sn && *sn!=')' ) ++sn;// for now follow C99 and just look for ), C17 would need a more complex check here
+	  	 	 if(*sn==')') s=sn+1;// found (...) so we have a valid match, +1 to skip final ) [ otherwise just the "NAN" is valid so we don't change s ]
+	  	 	}
+		 if(endptr!=NULL) *endptr=(char *)s;
+	  	 if(sign) return -nan("1");// -NAN would print back as  -nan(ind)
+	  	 return NAN;
+	  	}    
+	  // INF or Infinity is a special case - and is signed
+	  if(my_tolower(*s)=='i' && my_tolower(s[1])=='n' && my_tolower(s[2])=='f')
+	  	{s+=3;// INF
+	  	 if(my_tolower(*s)=='i' && my_tolower(s[1])=='n' && my_tolower(s[2])=='i' && my_tolower(s[3])=='t' && my_tolower(s[4])=='y' )
+	  	  	s+=5; // "Infinity" is 5 more chars (inity) than "inf"
+	  	 if(endptr!=NULL) *endptr=(char *)s;
+	  	 if(sign) return -INFINITY;
+	  	 return INFINITY;
+	  	} 
+	} // if(*s>'9') 
+// at this point we know *s is a digit or a decimal point [ or rather *s is <='9' which includes 0 to 9 and decimal point ] 
 #ifdef AFormatSupport 
 	/* support hex floating point numbers of the format 0xh.hhhhp+/-d as generated by printf %a */
-  if(*s=='0' && (s[1]=='x' || s[1] =='X'))
+  if(*s=='0' && my_tolower(s[1])=='x' )
   	{ // got hex number
   	 double h;
   	 s+=2; // skip 0x
@@ -333,7 +339,7 @@ static uint32_t u32powersOf10[]=
 	  		{ if(*s<='9')
 			  	r=r*16+(*s-'0'); // 0..9
 			  else
-			  	r=r*16+(tolower(*s)-'a'+10); // a-f or A-F
+			  	r=r*16+(my_tolower(*s)-'a'+10); // a-f or A-F
 			}
 		else if(exp<2048)
 		      exp+=4; // cannot actually capture digits beyond 16 but keep track of decimal point, trap  ensures we don't overflow exp when given a number with a silly number of digits (that would overflow a double)
@@ -349,7 +355,7 @@ static uint32_t u32powersOf10[]=
 	  			{ if(*s<='9')
 			  		r=r*16+(*s-'0'); // 0..9
 			  	 else
-			  		r=r*16+(tolower(*s)-'a'+10); // a-f or A-F
+			  		r=r*16+(my_tolower(*s)-'a'+10); // a-f or A-F
 			  	 exp-=4;	
 				}
 			 // if we have too many digits after dp just ignore them
@@ -366,7 +372,7 @@ static uint32_t u32powersOf10[]=
  		}	
   	 se=s; // update to reflect end of a valid mantissa
   	 // now see if we have an  exponent
-  	 if(*s=='p' || *s=='P')
+  	 if(my_tolower(*s)=='p')
   		{// have exponent, optional sign is 1st
   	 	 ++s ; // skip 'p'
   	 	 if(*s=='+') ++s;
@@ -374,7 +380,7 @@ static uint32_t u32powersOf10[]=
   	 		{expsign=true;
   	 	 	 ++s;
   	 		}
-  	 	while(isdigit(*s))
+  	 	while(my_isdigit(*s))
 	   		{if(rexp<=2048)
 		   		rexp=rexp*10+(*s - '0');  // if statement clips at a value that will result in +/-inf but will not overflow int
 		 	 ++s;  
@@ -397,19 +403,28 @@ static uint32_t u32powersOf10[]=
   	{got_number=true; // have a number (0)
 	 ++s;
 	}
+ if(my_isdigit(*s))
+ 	{// deal with 1st significant digit of mantissa. special case, moves got_number=true; out of the while loop below and saves a multiply in setting r
+ 	 got_number=true; // have a valid number
+	 r=(*s-'0');
+	 nos_mant_digits=1;
+	 ++s;
+	}
   // now read rest of the mantissa	
-  while(isdigit(*s))
-  	{ got_number=true; // have a valid number
-	  if(nos_mant_digits<maxdigits)
+  while(my_isdigit(*s))
+  	{ 
+	  if(nos_mant_digits<max_d_digits)
 	  	{ r=r*10+(*s-'0');
 		  nos_mant_digits++;	
 		}
 	  else
 	  	{ 
-		  if(nos_mant_digits==maxdigits)
+#if 1	  	
+		  if(nos_mant_digits==max_d_digits)
 	  	  		{if(*s >='5') r++; // use 1st "ignored digit" to round to nearest
 	  	  		 nos_mant_digits++;
 	  	  		}
+#endif	  	  		
 		  if(exp<2*maxExponent)
 		      exp++; // cannot actually capture digits as more than 18 but keep track of decimal point, trap at 2*maxExponent ensures we don't overflow exp when given a number with a silly number of digits (that would overflow a double)
 		}
@@ -421,43 +436,32 @@ static uint32_t u32powersOf10[]=
   	 ++s;
   	 if(r==0)
   	 	{// number is zero at present, so deal with leading zeros in fractional bit of mantissa
+  	 	 if(my_isdigit(*s)) got_number=true; // if r!=0 then we must already have had a digit so got_number has already been set to true
   	 	 while(*s=='0')
-  	 	 	{got_number=true;
+  	 	 	{
   	 	 	 ++s;
   	 	 	 if(exp > -2*maxExponent)
   	 	 	 	exp--; // test avoids issues with silly number of leading zeros
   	 	    }
   	 	}
-  	 // now process the rest of the fractional bit of the mantissa
-	 while(isdigit(*s))
-	 	{got_number=true;
-#if 1	 	
-  	 	// see if the whole remaining fractional bit is "0", if so can just skip. This speeds up some conversions (and slows others) but more importantly it ensures 1, 1.0, 1.00 & 1.15, 1.150, 1.1500 etc give exactly the same result
-		 
-	 	 if(*s=='0')
-	 		{// got a zero, see if all remaining numbers in mantissa are zero
-	 		 const char *s0=s;
-	 	  	 while(*s0=='0') ++s0;
-	 	  	 if(!isdigit(*s0))
-	 			{// was all zero's, just skip them
-		 	 	 s=s0;
-		 	 	 break;
-				}
-			}		 	
-#endif			
-	 	 if(nos_mant_digits<maxdigits)
+  	 // now process the rest of the fractional bit of the mantissa, got_number is already true at this point in the code
+	 while(my_isdigit(*s))
+	 	{			
+	 	 if(nos_mant_digits<max_d_digits)
 	  			{ r=r*10+(*s-'0');
 		  		  nos_mant_digits++;	
 		  		  exp--;
 				}
 		 else
-	  			{  // cannot actually capture digits as more than 18, so just ignore them (except for next digit which we use for rounding)
-	  			  if(nos_mant_digits==maxdigits ) 
+	  			{  // cannot actually capture digits as more than 19, so just ignore them (except for next digit which we use for rounding)
+#if 1	  			
+	  			  if(nos_mant_digits==max_d_digits ) 
 	  			  		{if(*s >='5') r++; // use 1st "ignored digit" to round to nearest
 	  			  		 nos_mant_digits++;
 	  			  		}
+#endif	  			  		
 				}
-		++s;
+		 ++s;
 		}
  	}
   // got all of mantissa - see if its a valid number, if not we are done
@@ -470,7 +474,7 @@ static uint32_t u32powersOf10[]=
  	}	
   se=s; // update to reflect end of a valid mantissa
   // now see if we have an  exponent
-  if(*s=='e' || *s=='E')
+  if(my_tolower(*s)=='e')
   	{// have exponent, optional sign is 1st
   	 ++s ; // skip 'e'
   	 if(*s=='+') ++s;
@@ -478,7 +482,7 @@ static uint32_t u32powersOf10[]=
   	 	{expsign=true;
   	 	 ++s;
   	 	}
-  	 while(isdigit(*s))
+  	 while(my_isdigit(*s))
 	   	{if(rexp<=2*maxExponent)
 		   rexp=rexp*10+(*s - '0');  // if statement clips at a value that will result in +/-inf but will not overflow int
 		 ++s;  
@@ -488,90 +492,56 @@ static uint32_t u32powersOf10[]=
  if(endptr!=NULL) *endptr=(char *)se; // we now know the end of the number - so save it now (means we can have multiple returns going forward without having to worry about this)	
  if(expsign) rexp=-rexp;	
  rexp+=exp; // add in correct to exponent from mantissa processing
-#if 1 /* if 0 removes the optimisations which just results in slower code - there is no loss of accuracy with these optimisations */
- if(rexp>0 && rexp+nos_mant_digits<=maxdigits)
+ 	
+/* some optimisations for (common) special cases - there is no loss of accuracy with these optimisations */
+ if(rexp>0 && rexp+nos_mant_digits<=max_d_digits)
  	{// optimisation: can do all calculations using uint64 which is fastish and exact
  	 r*=u64powersOf10[rexp];
- 	 rexp=0;// will just convert to double and return
+ 	 // just convert to double and return
+ 	 if(sign) return -(double)(r); 
+	 else return (double)r;
  	}
- else if(rexp<0 && rexp >= -15 && nos_mant_digits<=15 )
- 	{// in this region we can use double rather than long double as 10^15 is exact as a double (another speed optimisation, but one than thats common and therefore worthwhile)
- 	 if(sign) return -(r/dblpowersOf10[-rexp]); // negative exponent means we divide by powers of 10
- 	 else return r/dblpowersOf10[-rexp];
-	}
-#endif
-#ifdef USE_RYU_FOR_POWERS10 /* use ryu to convert to ieee format double */
- return ryu_conv_mant_exp_to_double(sign,r,rexp);
-}
-#elif defined(USE_LD)
- // calculate dr=(long double)r*powl(10,rexp), but by using a lookup table of powers of 10 for speed and accuracy, and using long doubles to ensure accuracy.
- if(rexp>0)
- 	{if(rexp>maxExponent)
-		{// we have defininaly overflowed
-		 if(sign) return -DBL_MAX;
- 		 return DBL_MAX;
- 		}
- 	 dr=r;
- 	 dr*=powersOf10[rexp]; // as mantissa >= 1 this may overflow, but thats OK.
-	}
- else if(rexp<0)
- 	{// need to take care here as mantissa is > 1 so even dividing by 10^maxExponent may not be enough, here we all division by upto 10^2*maxExponet is is by far enough
-	 rexp= -rexp;
-	 exp=rexp;
-	 if(rexp>maxExponent)
-	 	{
- 		 rexp=maxExponent;
- 		 exp-=maxExponent; // any excess which we will also need to divide by (if its > 0)
- 		}
- 	  else exp=0;	
- 	  dr=r;
- 	  dr/=powersOf10[rexp]; // negative exponent means we divide by powers of 10
- 	  if(exp>0)
- 	  	{dr/=powersOf10[exp]; // divide by some more, we should only be dividing by max 10^18 as we only have 18 sig figs in mantissa (plus a few more if we consider creation of denormalised numbers)
- 	    }
-	}	
- else
- 	{// special case, rexp==0
-	 // do not need to use long double here, so we use double for speed.
- 	 if(sign) return -((double)r); // r is unsigned so cannot do -r !
- 	 else return (double) r;
-	}
- if(isinf((double)dr)) dr=DBL_MAX;
- if(sign) dr= -dr;
-#ifdef DEBUG
- // while this is the normal return there are several earlier return possibilities, which this will not print for (sorry).
- fprintf(stderr," strtod returns %.18g (rexp=%d, exp=%d)\n",(double)dr,rexp,exp); 
-#endif 
 
- return (double)dr; // this should be only rounding [it will be round to even] - to this point we have used integer maths (exact) or long doubles (very nearly exact).
-
-}
+ if(rexp<=22 && rexp >= -22 && r<=UINT64_C(9007199254740991) )
+ 	{// in this region we can use double  (another speed optimisation, but one than thats common and therefore worthwhile)
+ 	 // Double mantissa is 53 bits so the largest value it can exactly represent is 9,007,199,254,740,991
+ 	 // as powers of 2 are exact, 5^m is the limit for exact powers of 10, 5^22   = 2,384,185,791,015,625 which is well below 2^53-1
+	 const double d_r=r;
+ 	 if(rexp<0)
+ 	 	{
+	 	 if(sign) return -d_r/PosPowerOf10_hi[-rexp]; // negative exponent means we divide by powers of 10
+	 	 else return d_r/PosPowerOf10_hi[-rexp];
+	 	}
+ 	 if(rexp>0)
+ 	 	{
+	 	 if(sign) return -d_r*PosPowerOf10_hi[rexp]; // positive exponent means we multiply by powers of 10
+	 	 else return d_r*PosPowerOf10_hi[rexp];
+	 	}
+	 else // rexp==0
+ 	 	{
+	 	 if(sign) return -d_r; 
+	 	 else return d_r;
+	 	}	 	 	
+	}
+#ifndef RYU_I_POWER10
+ return ya_conv_mant_exp_to_double(sign,r,rexp);// new solution March 2026 multiply r*10^rexp and then add sign
 #else
-/* use double double. Input is mantissa as uint64 (r) and exponent as rexp */
-/* special cases */
- if(rexp>maxExponent)
-	{// we have defininaly overflowed as mantissa is >=1
-	 if(sign) return -DBL_MAX;
-	 return DBL_MAX;
-	}
- if(rexp<-500)
-	{// we have defininaly underflowed as mantissa is uint64 max ~ 1e19
-	 if(sign) return -0.0;
-	 return 0.0;
-	} 
- U64toDD(r,&dh,&dl);/* convert uint64 to double double */
- //if(isnan(dh) || isnan(dl)) fprintf(stderr,"NAN1: %g,%g\n",dh,dl);
-#ifdef DEBUG 	
- printf("%llu => %g + %g\n",r,dh,dl);
-#endif 
- dd_mult_power10( &dh, &dl, dh, dl, rexp ) ;// d *10^rexp
- //if(isnan(dh) || isnan(dl)) fprintf(stderr,"NAN2: %g,%g : rexp=%d\n",dh,dl,rexp);
- if(isinf(dh)) dh=DBL_MAX;
- if(sign) return -dh; // we only return a double so dl is not needed now
- return dh;
+ // now we need to "normalise" the mantissa, if its an exact power of 10 (we compensate by adjusting the power of 10 exponent which is an exact process).
+ // not doing this can give a 1 bit error as r may not convert exactly into a double and then we have the additional power10 error.
+ // "optimisations" above deal with the case where r==0, so we can ignore that possibility here
+ // This is necessary even when using "Ryu" for the powers of 10 conversion.
+  if((r>UINT64_C(9007199254740991)  ) && (r&1)==0 && (uint64_t)(r * 0xcccccccccccccccdull) <= 0x3333333333333333ull) //  test for even and division by 5 (as 10=2*5) , see https://math.stackexchange.com/questions/1251327/is-there-a-fast-divisibility-check-for-a-fixed-divisor
+ 	{// we know r divides by 10 so we can use a do/while loop, 2^64/9007199254740991 = 2048 so at most we will divide by 10,000 here (i.e 4 times around the do/while loop)
+	 do
+	 	{r/=10;
+	 	 rexp++;
+	 	 nos_mant_digits--;
+	 	} while((r>UINT64_C(9007199254740991) ) && (r&1)==0  && (uint64_t)(r * 0xcccccccccccccccdull) <= 0x3333333333333333ull);
+	}	
+ return ryu_conv_mant_exp_to_double(sign,r,rexp);// solution derived from Ryu,  multiply r*10^rexp and then add sign
+#endif
 }
 
-#endif
  
 /*
  *----------------------------------------------------------------------
@@ -631,23 +601,15 @@ double fast_atof_nan(const char *s)// like fast_atof, but returns NAN if the str
  *----------------------------------------------------------------------
  */
 
+/* new version that just uses a single uint32_t for mantissa. At most 9 sig figs are needed for round loop exact with a float, and 32 bits allows max value of 4,294,967,295 (2^32 -1) */
+#define maxfdigits 9
 
-#if defined(__SIZEOF_POINTER__ ) && __SIZEOF_POINTER__ == 8 /* compiling for x86_64 , this is defined for gcc, if its not defined the build version uisng u32's which is the best default  */ 
- /* could also have used __WIN64__, WIN64, __WIN64, __X86_64__ which all appear to only be defined for 64 bit compiles */
- /* version of fast_strtof() using uint64 - this passes the test suite with no errors */
- /* tests with nsort show this is faster than the version below which tries to use uint32's as much as possible when compiled for x64  
-    When compiled for 64 bits, this code takes 1.203 secs to sort demo1M.csv, whereas the code below based on u32's takes 1.406 secs. 
-    When compiled for 32 bits, this version using u64 takes 2.093 secs, while the version using u32 takes 1.532 secs
-    above #if statement should automatically compile the fastest version.
- */   
-const int fast_strtof_u=64; // tell rest of system we are using u64's (only useful for diagnostics/debugging)
 
-static const int maxfdigits=18; // see above this is the largest possible in a uint64
 float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st character thats not in the number
  {
   double dr; // may need to use double precision to get an accurate float - we try hard below to avoid this either by uisng just a uint32, or just by using float's
-  bool sign=false,expsign=false,got_number=false;
-  uint64_t r=0; // mantissa, uint32 can hold 9 digits which is NOT enough for a float
+  bool sign=false,expsign=false,got_number=false,round_digit=false;
+  uint32_t r=0; // mantissa, uint32 can hold 9 digits which is enough for a float
   int exp=0,rexp=0;
   int nos_mant_digits=0;
   const char *se=s; // string end - candidate for endptr
@@ -655,45 +617,97 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
   fprintf(stderr,"strtof(%s):\n",s);
 #endif   
   if(s==NULL) return NAN;
-  while(isspace(*s)) ++s; // skip initial whitespace	
+  while(isspace(*s)) ++s; // skip initial whitespace isspace() is specified by the C standard for this step	
   // deal with leading sign
   if(*s=='+') ++s;
   else if(*s=='-')
   	{sign=true;
   	 ++s;
     }
-  // NAN is a special case - NAN is  signed in the input and keeps this on the output
-  if((*s=='n' || *s=='N') && (s[1]=='a' || s[1]=='A') && (s[2]=='n' || s[2]=='N'))
-  	{if(endptr!=NULL) *endptr=(char *)s+3;// 3 for NAN
-  	 if(sign) return -NAN;
-  	 return NAN;
-  	}    
-  // INF or Infinity is a special case - and is signed
-  if((*s=='i' || *s=='I') && (s[1]=='n' || s[1]=='N') && (s[2]=='f' || s[2]=='F'))
-  	{s+=3;// INF
-  	 if((*s=='i' || *s=='I') && (s[1]=='n' || s[1]=='N') && (s[2]=='i' || s[2]=='I') && (s[3]=='t' || s[3]=='T') && (s[4]=='y' || s[4]=='Y') )
-  	  	s+=5; // "Infinity" is 5 more chars (inity) than "inf"
-  	 if(endptr!=NULL) *endptr=(char *)s;
-  	 if(sign) return -INFINITY;
-  	 return INFINITY;
-  	}    
+
+  // this is the critical path - if the character is >'9' then it starts with a letter [ nan, inf ], note '.' is < '9'
+  if(*s>'9') 
+  	{// not a digit - work out what we have [off the critical path]
+	  // NAN is a special case - NAN is  signed in the input and keeps this on the output
+	  if(my_tolower(*s)=='n' && my_tolower(s[1])=='a' && my_tolower(s[2])=='n')
+	  	{/* For more information on NAN's see my nan_type repository.
+		  C99 allows nan to be followed by (...) , C17 7.22.1.3 says:
+	  	The expected form of the subject sequence is an optional plus or minus sign, then one of the
+		following:
+		....
+		— NAN or NAN(n-char-sequenceopt), ignoring case in the NAN part, where:
+		n-char-sequence:
+			digit
+			nondigit
+			n-char-sequence digit
+			n-char-sequence nondigit
+		The subject sequence is defined as the longest initial subsequence of the input string, starting with
+		the first non-white-space character, that is of the expected form. The subject sequence contains no
+		characters if the input string is not of the expected form.
+	 	
+	 	A character sequence NAN or NAN(n-char-sequenceopt) is interpreted as a quiet NaN, if
+		supported in the return type, else like a subject sequence part that does not have the expected form;
+		the meaning of the n-char sequence is implementation-defined.298) 
+	 
+	 	298)An implementation may use the n-char sequence to determine extra information to be represented in the NaN’s
+		significand.
+		
+		That that "nondigit" is defined in 6.4.2.1 as
+			nondigit: one of
+				_ a b c d e f g h i j k l m
+				n o p q r s t u v w x y z
+				A B C D E F G H I J K L M
+				N O P Q R S T U V W X Y Z
+			digit: one of
+				0 1 2 3 4 5 6 7 8 9	
+		 On Windows (UCRT) for floats 0XFFC00000 (-NAN) gives "-nan(ind)" [ or -NAN(IND) ] , nanf("") => nan=>0X7FC00000
+	  	*/
+	  	 s+=3;// skip NAN [ which is valid by its self ]
+	  	 const char *sn=s;// we now look forward to see if we have NAN(n-char-sequenceopt)
+	  	 if(*sn=='(')
+	  	 	{// ( optional n-char sequence then )  
+	  	 	 sn++; // skip (
+	  	 	 if(my_tolower(*sn)=='i' && my_tolower(sn[1])=='n' && my_tolower(sn[2])=='d' && sn[3]==')' )
+	  	 	 	{s+=5; // "(ind)" => special case (+5 as we have already skipped the "(" )
+	  	 	 	 if(endptr!=NULL) *endptr=(char *)s;
+	  	 	 	 return -NAN;// this is always -ve
+	  	 	 	}
+	  	 	 // not nan(ind) - look for any other pattern allowed by C99
+	  	 	 while(*sn && *sn!=')' ) ++sn;// for now follow C99 and just look for ), C17 would need a more complex check here
+	  	 	 if(*sn==')') s=sn+1;// found (...) so we have a valid match, +1 to skip final ) [ otherwise just the "NAN" is valid so we don't change s ]
+	  	 	}
+		 if(endptr!=NULL) *endptr=(char *)s;
+	  	 if(sign) return -nanf("1");// -NAN would print back as  -nan(ind)
+	  	 return NAN;
+	  	}    
+	  // INF or Infinity is a special case - and is signed
+	  if(my_tolower(*s)=='i' && my_tolower(s[1])=='n' && my_tolower(s[2])=='f')
+	  	{s+=3;// INF
+	  	 if(my_tolower(*s)=='i' && my_tolower(s[1])=='n' && my_tolower(s[2])=='i' && my_tolower(s[3])=='t' && my_tolower(s[4])=='y' )
+	  	  	s+=5; // "Infinity" is 5 more chars (inity) than "inf"
+	  	 if(endptr!=NULL) *endptr=(char *)s;
+	  	 if(sign) return -INFINITY;
+	  	 return INFINITY;
+	  	} 
+	} // if(*s>'9') 
+// at this point we know *s is a digit or a decimal point [ or rather *s is <='9' which includes 0 to 9 and decimal point ]
 #ifdef AFormatSupport 
-	/* support hex floating point numbers of the format 0xh.hhhhp+/-d as generated by printf %a */
-  if(*s=='0' && (s[1]=='x' || s[1] =='X'))
+	/* support hex floating point numbers of the format 0xh.hhhhp+/-d as generated by printf %a - warning should use %.8a at most for a float */
+  if(*s=='0' && my_tolower(s[1])=='x' )
   	{ // got hex number
   	 float h;
   	 s+=2; // skip 0x
-  	 // no need to skip leading zero's as we can just check is ms 4 bits of r are not zero
+  	 // no need to skip leading zero's as we can just check is ms 4 bits of r are not zero, we only expect 1 digit before decimal point, code here is more general
 	 while(isxdigit(*s))
 		{got_number=true; // have a valid number
-	  	 if((r & UINT64_C(0xf000000000000000))==0)
+	  	 if((r & UINT32_C(0xf0000000))==0)
 	  		{ if(*s<='9')
 			  	r=r*16+(*s-'0'); // 0..9
 			  else
-			  	r=r*16+(tolower(*s)-'a'+10); // a-f or A-F
+			  	r=r*16+(my_tolower(*s)-'a'+10); // a-f or A-F
 			}
 		else if(exp<2048)
-		      exp+=4; // cannot actually capture digits beyond 16 but keep track of decimal point, trap  ensures we don't overflow exp when given a number with a silly number of digits (that would overflow a double)
+		      exp+=4; // cannot actually capture digits beyond 8 but keep track of decimal point, trap  ensures we don't overflow exp when given a number with a silly number of digits (that would overflow a float)
 		 ++s;
 		}
   	 // now look for optional decimal point (and fractional bit of mantissa)
@@ -702,14 +716,21 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
   	 	 ++s;
 		 while(isxdigit(*s))
 			{got_number=true; // have a valid number
-	  	 	 if((r & UINT64_C(0xf000000000000000))==0)
+	  	 	 if((r & UINT32_C(0xf0000000))==0)
 	  			{ if(*s<='9')
 			  		r=r*16+(*s-'0'); // 0..9
 			  	 else
-			  		r=r*16+(tolower(*s)-'a'+10); // a-f or A-F
+			  		r=r*16+(my_tolower(*s)-'a'+10); // a-f or A-F
 			  	 exp-=4;	
 				}
-			 // if we have too many digits after dp just ignore them
+			 else
+				{// if we have too many digits after dp, round on next digit then just ignore them [ note extra digits are likely as printf() does not know about floats ] 
+				 if(!round_digit)
+					{if(*s=='8' || *s=='9' || isalpha(*s)) r++; // do rounding>=8 rounds up
+					 if(r==0) {r=UINT32_C(0x10000000) ; exp+=4; } // r==0 means we overflowed, fix this
+					 round_digit=true;// we can only round once
+					}
+				}
 		 	 ++s;
 		 	}
 		}			  
@@ -723,7 +744,7 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
  		}	
   	 se=s; // update to reflect end of a valid mantissa
   	 // now see if we have an  exponent
-  	 if(*s=='p' || *s=='P')
+  	 if(my_tolower(*s)=='p')
   		{// have exponent, optional sign is 1st
   	 	 ++s ; // skip 'p'
   	 	 if(*s=='+') ++s;
@@ -731,7 +752,7 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
   	 		{expsign=true;
   	 	 	 ++s;
   	 		}
-  	 	while(isdigit(*s))
+  	 	while(my_isdigit(*s))
 	   		{if(rexp<=2048)
 		   		rexp=rexp*10+(*s - '0');  // if statement clips at a value that will result in +/-inf but will not overflow int
 		 	 ++s;  
@@ -744,25 +765,37 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
 	 h=ldexpf((float)r,rexp); // combine mantissa and exponent 
 	 if(sign) h=-h;
 #ifdef DEBUG
- 	 fprintf(stderr," strtof (0x) returns %.18g [0x%.16A] (rexp=%d, exp=%d)\n",h,h,rexp,exp); 
+ 	 fprintf(stderr," strtof (0x) returns %.9g [0x%.8A] (rexp=%d, exp=%d)\n",h,h,rexp,exp); 
 #endif  	 
 	 return h; // all done 	
 	}
-#endif		    
+#endif	
+  // if we get here we are processing a decimal number 	    
   // skip leading zeros
   while(*s=='0')
   	{got_number=true; // have a number (0)
 	 ++s;
 	}
+  // 1st "real" digit
+  if(my_isdigit(*s))
+  	{got_number=true; // have a valid number
+  	 r=*s-'0';
+  	 nos_mant_digits=1;
+  	 ++s;
+  	}
   // now read rest of the mantissa	
-  while(isdigit(*s))
-  	{ got_number=true; // have a valid number
+  while(my_isdigit(*s))
+  	{ // no need to set got_number here as would have been set by if() above on 1st digit
 	  if(nos_mant_digits<maxfdigits)
 	  	{ r=r*10+(*s-'0');
 		  nos_mant_digits++;	
 		}
 	  else
-	  	{ if(exp<2*maxfExponent)
+	  	{if(!round_digit)
+	  		{if(*s>='5') r++; // do rounding, we know *s is a digit
+	  		 round_digit=true;// we can only round once
+	  		}
+		 if(exp<2*maxfExponent)
 		      exp++; // cannot actually capture digits as more than 9 but keep track of decimal point, trap at 2*maxExponent ensures we don't overflow exp when given a number with a silly number of digits (that would overflow a double)
 		}
 	++s;
@@ -773,23 +806,28 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
   	 ++s;
   	 if(r==0)
   	 	{// number is zero at present, so deal with leading zeros in fractional bit of mantissa
+  	 	 if(my_isdigit(*s)) got_number=true; // if r!=0 then we must already have had a digit so got_number has already been set to true
   	 	 while(*s=='0')
-  	 	 	{got_number=true;
+  	 	 	{
   	 	 	 ++s;
   	 	 	 if(exp > -2*maxfExponent)
   	 	 	 	exp--; // test avoids issues with silly number of leading zeros
   	 	    }
   	 	}
-  	 // now process the rest of the fractional bit of the mantissa
-	 while(isdigit(*s))
-	 	{got_number=true;
+  	 // now process the rest of the fractional bit of the mantissa, got_number is already true at this point in the code
+	 while(my_isdigit(*s))
+	 	{
 	 	 if(nos_mant_digits<maxfdigits)
 	  			{ r=r*10+(*s-'0');
 		  		  nos_mant_digits++;	
 		  		  exp--;
 				}
 		 else
-	  			{  // cannot actually capture digits as more than 9, so just ignore them
+	  			{  // cannot actually capture digits as more than 9, so just ignore them (but round on 1st over 9)
+	  			 if(!round_digit)
+			  		{if(*s>='5') r++; // do rounding, we know *s is a digit
+			  		 round_digit=true;// we can only round once
+			  		}
 				}
 		++s;
 		}
@@ -804,7 +842,7 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
  	}	
   se=s; // update to reflect end of a valid mantissa
   // now see if we have an  exponent
-  if(*s=='e' || *s=='E')
+  if(my_tolower(*s)=='e')
   	{// have exponent, optional sign is 1st
   	 ++s ; // skip 'e'
   	 if(*s=='+') ++s;
@@ -812,7 +850,7 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
   	 	{expsign=true;
   	 	 ++s;
   	 	}
-  	 while(isdigit(*s))
+  	 while(my_isdigit(*s))
 	   	{if(rexp<=2*maxfExponent)
 		   rexp=rexp*10+(*s - '0');  // if statement clips at a value that will result in +/-inf but will not overflow int
 		 ++s;  
@@ -822,321 +860,51 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
  if(endptr!=NULL) *endptr=(char *)se; // we now know the end of the number - so save it now (means we can have multiple returns going forward without having to worry about this)	
  if(expsign) rexp=-rexp;	
  rexp+=exp; // add in correct to exponent from mantissa processing
-#if 1 /* if 0 removes the optimisations which just results in slower code - there is no loss of accuracy with these optimisations */
- if(rexp>0 && rexp+nos_mant_digits<=9)
- 	{// optimisation: can do all calculations using uint32 which is exact and fast
- 	 uint32_t r32=r;	 
- 	 r32*=u32powersOf10[rexp];
- 	 if(sign) return -((float)r32); // negative exponent means we divide by powers of 10
- 	 else return (float)r32;
- 	}
- else if(rexp<0 && rexp >= -6 && nos_mant_digits<=6 )
- 	{// in this region we can use float rather than double as 10^6 is exact as a float (another speed optimisation, but one than thats common and therefore worthwhile)
- 	 if(sign) return -((float)r/fltpowersOf10[-rexp]); // negative exponent means we divide by powers of 10
- 	 else return (float)r/fltpowersOf10[-rexp];
-	}
-#endif
- // calculate dr=(float)r*pow(10,rexp), but by using a lookup table of powers of 10 for speed and accuracy, and using doubles to ensure accuracy.
- if(rexp>0)
- 	{if(rexp>maxfExponent)
-		{// we have defininaly overflowed
-		 if(sign) return -FLT_MAX;
- 		 return FLT_MAX;
- 		}
- 	 dr=(double)r*dblpowersOf10[rexp]; // as mantissa >= 1 this may overflow, but thats OK.
-	}
- else if(rexp<0)
- 	{// need to take care here as mantissa is > 1 so even dividing by 10^maxExponent may not be enough, here we all division by upto 10^2*maxExponet is is by far enough
-	 rexp= -rexp;
-	 exp=rexp;
-	 if(rexp>maxfExponent)
-	 	{
- 		 rexp=maxfExponent;
- 		 exp-=maxfExponent; // any excess which we will also need to divide by (if its > 0)
- 		}
- 	  else exp=0;	
- 	  dr=(double)r/dblpowersOf10[rexp]; // negative exponent means we divide by powers of 10
- 	  if(exp>0)
- 	  	{dr/=dblpowersOf10[exp]; // divide by some more, we should only be dividing by max 10^18 as we only have 18 sig figs in mantissa (plus a few more if we consider creation of denormalised numbers)
- 	    }
-	}	
- else
+ if(rexp==0)
  	{// special case, rexp==0
 	 // do not need to use double here, so we use float for speed.
  	 if(sign) return -((float)r); // r is unsigned so cannot do -r !
  	 else return (float) r;
 	}
- if(isinf((float)dr)) dr=FLT_MAX;
- if(sign) dr= -dr;
-#ifdef DEBUG
- // while this is the normal return there are several earlier return possibilities, which this will not print for (sorry).
- fprintf(stderr," strtof returns %.18g (rexp=%d, exp=%d)\n",(double)dr,rexp,exp); 
-#endif 
- return (float)dr;
-}
-
-#else 
-
- /* version of fast_strtof() using unit32 */
- /* ======================================*/
- /* I could not get this to work to full accuracy by just using a uint32 mantissa, so the code below uses a uint32 for as long as possible then swaps to a uint64 */
- /* this reduces the number of uint64 multiplies and additions and so is faster that just using a uint64 all the time */
- const int fast_strtof_u=32; // tell rest of system we are using u32's (only useful for diagnostics/debugging)
- static const int maxfdigits=18; // see above this is the largest possible in a uint32
- 
-float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st character thats not in the number
- {
-  double dr; // may need to use double precision to get an accurate float - we try hard below to avoid this either by uisng just a uint32, or just by using float's
-  bool sign=false,expsign=false,got_number=false;
-  uint_fast32_t r32=0; // mantissa, uint32 can hold 9 digits 
-  uint_fast64_t r64=0; // if we get too many digits in mantissa then we swap to using this
-  bool usingr64=false; // set to true when we use r64
-  int_fast16_t exp=0,rexp=0;
-  int_fast16_t nos_mant_digits=0;
-  const char *se=s; // string end - candidate for endptr
-#ifdef DEBUG
-  fprintf(stderr,"strtof(%s):\n",s);
-#endif   
-  if(s==NULL) return NAN; 
-  while(isspace(*s)) ++s; // skip initial whitespace	
-  // deal with leading sign
-  if(*s=='+') ++s;
-  else if(*s=='-')
-  	{sign=true;
-  	 ++s;
-    }
-  // NAN is a special case - NAN is  signed in the input and keeps this for output
-  if((*s=='n' || *s=='N') && (s[1]=='a' || s[1]=='A') && (s[2]=='n' || s[2]=='N'))
-  	{if(endptr!=NULL) *endptr=(char *)s+3;// 3 for NAN
-  	 if(sign) return -NAN;
-  	 return NAN;
-  	}    
-  // INF or Infinity is a special case - and is signed
-  if((*s=='i' || *s=='I') && (s[1]=='n' || s[1]=='N') && (s[2]=='f' || s[2]=='F'))
-  	{s+=3;// INF
-  	 if((*s=='i' || *s=='I') && (s[1]=='n' || s[1]=='N') && (s[2]=='i' || s[2]=='I') && (s[3]=='t' || s[3]=='T') && (s[4]=='y' || s[4]=='Y') )
-  	  	s+=5; // "Infinity" is 5 more chars (inity) than "inf"
-  	 if(endptr!=NULL) *endptr=(char *)s;
-  	 if(sign) return -INFINITY;
-  	 return INFINITY;
-  	}   
-#ifdef AFormatSupport 
-	/* support hex floating point numbers of the format 0xh.hhhhp+/-d as generated by printf %a */
-  if(*s=='0' && (s[1]=='x' || s[1] =='X'))
-  	{ // got hex number
-  	 float h;
-  	 uint_fast64_t r=0;// always use a 64 bit mantissa as we only do shitfs and adds here on mantissa so these should be fast enough on 64 bits.
-  	 s+=2; // skip 0x
-  	 // no need to skip leading zero's as we can just check is ms 4 bits of r are not zero
-	 while(isxdigit(*s))
-		{got_number=true; // have a valid number
-	  	 if((r & UINT64_C(0xf000000000000000))==0)
-	  		{ if(*s<='9')
-			  	r=r*16+(*s-'0'); // 0..9
-			  else
-			  	r=r*16+(tolower(*s)-'a'+10); // a-f or A-F
-			}
-		else if(exp<2048)
-		      exp+=4; // cannot actually capture digits beyond 16 but keep track of decimal point, trap  ensures we don't overflow exp when given a number with a silly number of digits (that would overflow a double)
-		 ++s;
-		}
-  	 // now look for optional decimal point (and fractional bit of mantissa)
-  	 if(*s=='.')
-  		{ // got decimal point, skip and then look for fractional bit
-  	 	 ++s;
-		 while(isxdigit(*s))
-			{got_number=true; // have a valid number
-	  	 	 if((r & UINT64_C(0xf000000000000000))==0)
-	  			{ if(*s<='9')
-			  		r=r*16+(*s-'0'); // 0..9
-			  	 else
-			  		r=r*16+(tolower(*s)-'a'+10); // a-f or A-F
-			  	 exp-=4;	
-				}
-			 // if we have too many digits after dp just ignore them
-		 	 ++s;
-		 	}
-		}			  
-  	 // got all of mantissa - see if its a valid number, if not we are done
-  	 if(!got_number)
- 		{if(endptr!=NULL) *endptr=(char *)se;
-#ifdef DEBUG
- 		 fprintf(stderr," strtof returns 0 (invalid hex number)\n"); 
-#endif  	
- 	 	 return 0;
- 		}	
-  	 se=s; // update to reflect end of a valid mantissa
-  	 // now see if we have an  exponent
-  	 if(*s=='p' || *s=='P')
-  		{// have exponent, optional sign is 1st
-  	 	 ++s ; // skip 'p'
-  	 	 if(*s=='+') ++s;
-  	 	 else if(*s=='-') 
-  	 		{expsign=true;
-  	 	 	 ++s;
-  	 		}
-  	 	while(isdigit(*s))
-	   		{if(rexp<=2048)
-		   		rexp=rexp*10+(*s - '0');  // if statement clips at a value that will result in +/-inf but will not overflow int
-		 	 ++s;  
-		 	 se=s; // update to reflect end of a valid exponent (p[+-]digit+)
-			}
-		}
- 	 if(endptr!=NULL) *endptr=(char *)se; // we now know the end of the number - so save it now (means we can have multiple returns going forward without having to worry about this)	
- 	 if(expsign) rexp=-rexp;	
- 	 rexp+=exp; // add in correct to exponent from mantissa processing				
-	 h=ldexpf((float)r,rexp); // combine mantissa and exponent 
-	 if(sign) h=-h;
-#ifdef DEBUG
- 	 fprintf(stderr," strtof (0x) returns %.18g [0x%.16A] (rexp=%d, exp=%d)\n",h,h,rexp,exp); 
-#endif  	 
-	 return h; // all done 	
-	}
-#endif	     
-  // skip leading zeros
-  while(*s=='0')
-  	{got_number=true; // have a number (0)
-	 ++s;
-	}
-  // now read rest of the mantissa	
-  while(isdigit(*s))
-  	{ got_number=true; // have a valid number
-	  if(!usingr64 && r32<=429496728  )
-	  	{ r32=r32*10+(*s-'0');// uint32 can hold upto 4,294,967,295 so we can directly store this extra digit
-		  nos_mant_digits++;	
-		}
-	  else if(nos_mant_digits < maxfdigits)	
-	    {if(!usingr64) 
-			{r64=r32;// too many digits for a uint32, swap to a uint64
-			 usingr64=true;
-			}
-		 r64=r64*10+(*s-'0'); 
-		 nos_mant_digits++;	
-		}		
-	  else if(exp<2*maxfExponent)
-		      exp++; // cannot actually capture digits as more than 9 but keep track of decimal point, trap at 2*maxExponent ensures we don't overflow exp when given a number with a silly number of digits (that would overflow a double)		
-	  ++s;
-	}
-  // now look for optional decimal point (and fractional bit of mantissa)
-  if(*s=='.')
-  	{ // got decimal point, skip and then look for fractional bit
-  	 ++s;
-  	 if(r32==0)
-  	 	{// number is zero at present, so deal with leading zeros in fractional bit of mantissa
-  	 	 while(*s=='0')
-  	 	 	{got_number=true;
-  	 	 	 ++s;
-  	 	 	 if(exp > -2*maxfExponent)
-  	 	 	 	exp--; // test avoids issues with silly number of leading zeros
-  	 	    }
-  	 	}
-  	 // now process the rest of the fractional bit of the mantissa
-	 while(isdigit(*s))
-	 	{got_number=true;
-	 	 if(!usingr64 && r32<=429496728 )
-	  			{ r32=r32*10+(*s-'0'); // uint32 can hold upto 4,294,967,295 so we can directly store this extra digit
-		  		  nos_mant_digits++;	
-		  		  exp--;
-				}
-	  	 else if(nos_mant_digits < maxfdigits)	
-	    	{if(!usingr64) 
-				{r64=r32;// too many digits for a uint32, swap to a uint64
-				 usingr64=true;
-				}
-		 	 r64=r64*10+(*s-'0'); 
-		 	 nos_mant_digits++;	
-		 	 exp--;
-			}		  			
-		 else
-	  			{ 
-				   // cannot actually capture digits as more than 18, so just ignore them as they after after decimal point
-				}
-		++s;
-		}
- 	}
-  // got all of mantissa - see if its a valid number, if not we are done
-  if(!got_number)
- 	{if(endptr!=NULL) *endptr=(char *)se;
-#ifdef DEBUG
- 	fprintf(stderr," strtof returns 0 (invalid number)\n"); 
-#endif  	
- 	 return 0;
- 	}	
-  if(!usingr64) r64=r32;// in this case put mantissa into both r64 and r32 so code below can use either as appropiate
-
-  se=s; // update to reflect end of a valid mantissa
-  // now see if we have an  exponent
-  if(*s=='e' || *s=='E')
-  	{// have exponent, optional sign is 1st
-  	 ++s ; // skip 'e'
-  	 if(*s=='+') ++s;
-  	 else if(*s=='-') 
-  	 	{expsign=true;
-  	 	 ++s;
-  	 	}
-  	 while(isdigit(*s))
-	   	{if(rexp<=2*maxfExponent)
-		   rexp=rexp*10+(*s - '0');  // if statement clips at a value that will result in +/-inf but will not overflow int
-		 ++s;  
-		 se=s; // update to reflect end of a valid exponent (e[+-]digit+)
-		}
-	}
- if(endptr!=NULL) *endptr=(char *)se; // we now know the end of the number - so save it now (means we can have multiple returns going forward without having to worry about this)	
- if(expsign) rexp=-rexp;	
- rexp+=exp; // add in correct to exponent from mantissa processing
-#if 1 /* if 0 removes the optimisations which just results in slower code - there is no loss of accuracy with these optimisations */
- if(!usingr64 && rexp>0 && rexp+nos_mant_digits<=9)
- 	{// optimisation: can do all calculations using uint32 which is exact and fast
- 	 r32*=u32powersOf10[rexp];
- 	 if(sign) return -((float)r32); // negative exponent means we divide by powers of 10
- 	 else return (float)r32;
- 	}
- else if(!usingr64 && rexp<0 && rexp >= -7 && nos_mant_digits<=7 )
- 	{// in this region we can use float rather than double as 10^6 is exact as a float (another speed optimisation, but one than thats common and therefore worthwhile)
- 	 // mantissa in a float is 23 bits+ the hidden bit so 24 bits, 2^24-1 = 1.67e7 so for integers we are exact for 7 sig digits.
- 	 if(sign) return -((float)r32/fltpowersOf10[-rexp]); // negative exponent means we divide by powers of 10
- 	 else return (float)r32/fltpowersOf10[-rexp];
-	}
-#endif
- // calculate dr=(float)r*pow(10,rexp), but by using a lookup table of powers of 10 for speed and accuracy, and using doubles to ensure accuracy.
+ // calculate dr=r*pow(10,rexp), but by using a lookup table of powers of 10 for speed and using doubles to ensure accuracy.
  if(rexp>0)
- 	{if(rexp>maxfExponent)
+ 	{
+	 if(rexp+nos_mant_digits<=9)
+	 	{// optimisation: can do all calculations using uint32 which is exact and fast	 
+	 	 r*=u32powersOf10[rexp];
+	 	 if(sign) return -((float)r); // negative exponent means we divide by powers of 10
+	 	 else return (float)r;
+	 	}
+	 if(rexp<=10 && r<=16777215)
+	 	{// in this region we can use float rather than double as 10^10 is exact as a float (another speed optimisation, but one than thats common and therefore worthwhile)
+	 	 // float has 24 bit mantissa, so can store upto 16,777,215 exactly 
+	 	 // As 10=2*5 and powers of 2 only effect the exponent, 5^10=9,765,625 which easily fits into a 24 bit mantissa
+	 	 if(sign) return -((float)r*fltpowersOf10[rexp]); // positive exponent means we mutiply by powers of 10
+	 	 else return (float)r*fltpowersOf10[rexp];	 
+		}
+	 if(rexp>maxfExponent)
 		{// we have defininaly overflowed
 		 if(sign) return -FLT_MAX;
  		 return FLT_MAX;
  		}
- 	 if(!usingr64) 	dr=(double)r32*dblpowersOf10[rexp]; // as mantissa >= 1 this may overflow, but thats OK.
- 	 else dr=(double)r64*dblpowersOf10[rexp]; // as mantissa >= 1 this may overflow, but thats OK.
+ 	 dr=(double)r*PosPowerOf10_hi[rexp]; // as mantissa >= 1 this may overflow, but thats OK. Array is in table_bin_10.h
 	}
  else if(rexp<0)
- 	{// need to take care here as mantissa is > 1 so even dividing by 10^maxExponent may not be enough, here we all division by upto 10^2*maxExponet is is by far enough
-	 rexp= -rexp;
-	 exp=rexp;
-	 if(rexp>maxfExponent)
-	 	{
- 		 rexp=maxfExponent;
- 		 exp-=maxfExponent; // any excess which we will also need to divide by (if its > 0)
- 		}
- 	  else exp=0;	
- 	  if(!usingr64) dr=(double)r32/dblpowersOf10[rexp]; // negative exponent means we divide by powers of 10
- 	  else dr=(double)r64/dblpowersOf10[rexp]; // negative exponent means we divide by powers of 10
- 	  if(exp>0)
- 	  	{dr/=dblpowersOf10[exp]; // divide by some more, we should only be dividing by max 10^18 as we only have 18 sig figs in mantissa (plus a few more if we consider creation of denormalised numbers)
- 	    }
-	}	
- else
- 	{// special case, rexp==0
-	 // do not need to use double here, so we use float for speed.
-	 if(!usingr64)
-	 	{ if(sign) return -((float)r32); // r is unsigned so cannot do -r !
- 	 	  else return (float) r32;
-	 	}
+ 	{// need to take care here as mantissa is > 1 so even dividing by 10^maxfExponent may not be enough, but here we use doubles which have a much wider exponent range so its not an issue
+ 	 rexp=-rexp;
+ 	 /* divide by powers of 10 (as doubles) => this gives 0 errors (I tried multiplying by 1/10^exp but this gave 2 round trip errors ) */
+	 if(rexp<=10 && r<=16777215)
+	 	{// in this region we can use float rather than double as 10^10 is exact as a float (another speed optimisation, but one than thats common and therefore worthwhile)
+	 	 // float has 24 bit mantissa, so can store upto 16,777,215 exactly 
+	 	 // As 10=2*5 and powers of 2 only effect the exponent, 5^10=9,765,625 which easily fits into a 24 bit mantissa
+	 	 if(sign) return -((float)r/fltpowersOf10[rexp]); // negative exponent means we divide by powers of 10
+	 	 else return (float)r/fltpowersOf10[rexp];	 
+		} 	 
+	 if(rexp>=nos_elements_in(PosPowerOf10_hi)) // Array is in table_bin_10.h
+		dr=0.0; // underflow
 	 else
-	 	{	
- 	 	 if(sign) return -((float)r64); // r is unsigned so cannot do -r !
- 	 	 else return (float) r64;
- 	 	}
-	}
+		dr=(double)r/PosPowerOf10_hi[rexp]; // negative exponent means we divide by powers of 10	 	    
+	}	
  if(isinf((float)dr)) dr=FLT_MAX;
  if(sign) dr= -dr;
 #ifdef DEBUG
@@ -1145,8 +913,9 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
 #endif 
  return (float)dr;
 }
-#endif 
- 
+
+
+
  /* this version is very similar to fast_strtof128 but for long doubles it uses the  u2_64 type for 128 bit integers
 */
 #if defined(LDBL_MAX_10_EXP) && LDBL_MAX_10_EXP==4932 /* "true" long double */
@@ -1199,21 +968,72 @@ long double fast_strtold(const char *s,char **endptr) // if endptr != NULL retur
   	{sign=true;
   	 ++s;
     }
-  // NAN is a special case - NAN is  signed in the input but always returns NAN
-  if((*s=='n' || *s=='N') && (s[1]=='a' || s[1]=='A') && (s[2]=='n' || s[2]=='N'))
-  	{if(endptr!=NULL) *endptr=(char *)s+3;// 3 for NAN
-  	 if(sign) return -NAN; 	
-  	 return NAN;
-  	}    
-  // INF or Infinity is a special case - and is signed
-  if((*s=='i' || *s=='I') && (s[1]=='n' || s[1]=='N') && (s[2]=='f' || s[2]=='F'))
-  	{s+=3;// INF
-  	 if((*s=='i' || *s=='I') && (s[1]=='n' || s[1]=='N') && (s[2]=='i' || s[2]=='I') && (s[3]=='t' || s[3]=='T') && (s[4]=='y' || s[4]=='Y') )
-  	  	s+=5; // "Infinity" is 5 more chars (inity) than "inf"
-  	 if(endptr!=NULL) *endptr=(char *)s;
-  	 if(sign) return -INFINITY;
-  	 return INFINITY;
-  	}  
+  // this is the critical path - if the character is >'9' then it starts with a letter [ nan, inf ], note '.' is < '9'
+  if(*s>'9') 
+  	{// not a digit - work out what we have [off the critical path]
+	  // NAN is a special case - NAN is  signed in the input and keeps this on the output
+	  if(my_tolower(*s)=='n' && my_tolower(s[1])=='a' && my_tolower(s[2])=='n')
+	  	{/* For more information on NAN's see my nan_type repository.
+		  C99 allows nan to be followed by (...) , C17 7.22.1.3 says:
+	  	The expected form of the subject sequence is an optional plus or minus sign, then one of the
+		following:
+		....
+		— NAN or NAN(n-char-sequenceopt), ignoring case in the NAN part, where:
+		n-char-sequence:
+			digit
+			nondigit
+			n-char-sequence digit
+			n-char-sequence nondigit
+		The subject sequence is defined as the longest initial subsequence of the input string, starting with
+		the first non-white-space character, that is of the expected form. The subject sequence contains no
+		characters if the input string is not of the expected form.
+	 	
+	 	A character sequence NAN or NAN(n-char-sequenceopt) is interpreted as a quiet NaN, if
+		supported in the return type, else like a subject sequence part that does not have the expected form;
+		the meaning of the n-char sequence is implementation-defined.298) 
+	 
+	 	298)An implementation may use the n-char sequence to determine extra information to be represented in the NaN’s
+		significand.
+		
+		That that "nondigit" is defined in 6.4.2.1 as
+			nondigit: one of
+				_ a b c d e f g h i j k l m
+				n o p q r s t u v w x y z
+				A B C D E F G H I J K L M
+				N O P Q R S T U V W X Y Z
+			digit: one of
+				0 1 2 3 4 5 6 7 8 9	
+		 On Windows (UCRT) for floats 0XFFC00000 (-NAN) gives "-nan(ind)" [ or -NAN(IND) ] , nanf("") => nan=>0X7FC00000
+	  	*/
+	  	 s+=3;// skip NAN [ which is valid by its self ]
+	  	 const char *sn=s;// we now look forward to see if we have NAN(n-char-sequenceopt)
+	  	 if(*sn=='(')
+	  	 	{// ( optional n-char sequence then )  
+	  	 	 sn++; // skip (
+	  	 	 if(my_tolower(*sn)=='i' && my_tolower(sn[1])=='n' && my_tolower(sn[2])=='d' && sn[3]==')' )
+	  	 	 	{s+=5; // "(ind)" => special case (+5 as we have already skipped the "(" )
+	  	 	 	 if(endptr!=NULL) *endptr=(char *)s;
+	  	 	 	 return -NAN;// this is always -ve
+	  	 	 	}
+	  	 	 // not nan(ind) - look for any other pattern allowed by C99
+	  	 	 while(*sn && *sn!=')' ) ++sn;// for now follow C99 and just look for ), C17 would need a more complex check here
+	  	 	 if(*sn==')') s=sn+1;// found (...) so we have a valid match, +1 to skip final ) [ otherwise just the "NAN" is valid so we don't change s ]
+	  	 	}
+		 if(endptr!=NULL) *endptr=(char *)s;
+	  	 if(sign) return -nanl("1");// -NAN would print back as  -nan(ind)
+	  	 return NAN;
+	  	}    
+	  // INF or Infinity is a special case - and is signed
+	  if(my_tolower(*s)=='i' && my_tolower(s[1])=='n' && my_tolower(s[2])=='f')
+	  	{s+=3;// INF
+	  	 if(my_tolower(*s)=='i' && my_tolower(s[1])=='n' && my_tolower(s[2])=='i' && my_tolower(s[3])=='t' && my_tolower(s[4])=='y' )
+	  	  	s+=5; // "Infinity" is 5 more chars (inity) than "inf"
+	  	 if(endptr!=NULL) *endptr=(char *)s;
+	  	 if(sign) return -INFINITY;
+	  	 return INFINITY;
+	  	} 
+	} // if(*s>'9') 
+// at this point we know *s is a digit or a decimal point [ or rather *s is <='9' which includes 0 to 9 and decimal point ]
 #ifdef AFormatSupport 
 	/* support hex floating point numbers of the format 0xh.hhhhp+/-d as generated by printf %a */
   if(*s=='0' && (s[1]=='x' || s[1] =='X'))
@@ -1277,7 +1097,7 @@ long double fast_strtold(const char *s,char **endptr) // if endptr != NULL retur
   	 		{expsign=true;
   	 	 	 ++s;
   	 		}
-  	 	while(isdigit(*s))
+  	 	while(my_isdigit(*s))
 	   		{if(rexp<=LDBL_MAX_EXP)
 		   		rexp=rexp*10+(*s - '0');  // if statement clips at a value that will result in +/-inf but will not overflow int
 		 	 ++s;  
@@ -1301,7 +1121,7 @@ long double fast_strtold(const char *s,char **endptr) // if endptr != NULL retur
 	 ++s;
 	}
   // now read rest of the mantissa	
-  while(isdigit(*s))
+  while(my_isdigit(*s))
   	{ got_number=true; // have a valid number
 	  //if((r & mask_msb128 )==0)
 	  if((and_u2_64(r,mask_msb128)).hi==0)
@@ -1329,7 +1149,7 @@ long double fast_strtold(const char *s,char **endptr) // if endptr != NULL retur
   	 	    }
   	 	}
   	 // now process the rest of the fractional bit of the mantissa
-	 while(isdigit(*s))
+	 while(my_isdigit(*s))
 	 	{got_number=true;
 #if 1	 	
   	 	// see if the whole remaining fractional bit is "0", if so can just skip. This speeds up some conversions (and slows others) but more importantly it ensures 1, 1.0, 1.00 & 1.15, 1.150, 1.1500 etc give exactly the same result
@@ -1338,7 +1158,7 @@ long double fast_strtold(const char *s,char **endptr) // if endptr != NULL retur
 	 		{// got a zero, see if all remaining numbers in mantissa are zero
 	 		 const char *s0=s;
 	 	  	 while(*s0=='0') ++s0;
-	 	  	 if(!isdigit(*s0))
+	 	  	 if(!my_isdigit(*s0))
 	 			{// was all zero's, just skip them
 		 	 	 s=s0;
 		 	 	 break;
@@ -1374,7 +1194,7 @@ long double fast_strtold(const char *s,char **endptr) // if endptr != NULL retur
   	 	{expsign=true;
   	 	 ++s;
   	 	}
-  	 while(isdigit(*s))
+  	 while(my_isdigit(*s))
 	   	{if(rexp<=2*LDBL_MAX_10_EXP)
 		   rexp=rexp*10+(*s - '0');  // if statement clips at a value that will result in +/-inf but will not overflow int
 		 ++s;  
@@ -1548,21 +1368,72 @@ __float128 fast_strtof128(const char *s,char **endptr) // if endptr != NULL retu
   	{sign=true;
   	 ++s;
     }
-  // NAN is a special case - NAN is  signed in the input but always returns NAN
-  if((*s=='n' || *s=='N') && (s[1]=='a' || s[1]=='A') && (s[2]=='n' || s[2]=='N'))
-  	{if(endptr!=NULL) *endptr=(char *)s+3;// 3 for NAN
-  	 if(sign) return -NAN; 	
-  	 return NAN;
-  	}    
-  // INF or Infinity is a special case - and is signed
-  if((*s=='i' || *s=='I') && (s[1]=='n' || s[1]=='N') && (s[2]=='f' || s[2]=='F'))
-  	{s+=3;// INF
-  	 if((*s=='i' || *s=='I') && (s[1]=='n' || s[1]=='N') && (s[2]=='i' || s[2]=='I') && (s[3]=='t' || s[3]=='T') && (s[4]=='y' || s[4]=='Y') )
-  	  	s+=5; // "Infinity" is 5 more chars (inity) than "inf"
-  	 if(endptr!=NULL) *endptr=(char *)s;
-  	 if(sign) return -INFINITY;
-  	 return INFINITY;
-  	}  
+  // this is the critical path - if the character is >'9' then it starts with a letter [ nan, inf ], note '.' is < '9'
+  if(*s>'9') 
+  	{// not a digit - work out what we have [off the critical path]
+	  // NAN is a special case - NAN is  signed in the input and keeps this on the output
+	  if(my_tolower(*s)=='n' && my_tolower(s[1])=='a' && my_tolower(s[2])=='n')
+	  	{/* For more information on NAN's see my nan_type repository.
+		  C99 allows nan to be followed by (...) , C17 7.22.1.3 says:
+	  	The expected form of the subject sequence is an optional plus or minus sign, then one of the
+		following:
+		....
+		— NAN or NAN(n-char-sequenceopt), ignoring case in the NAN part, where:
+		n-char-sequence:
+			digit
+			nondigit
+			n-char-sequence digit
+			n-char-sequence nondigit
+		The subject sequence is defined as the longest initial subsequence of the input string, starting with
+		the first non-white-space character, that is of the expected form. The subject sequence contains no
+		characters if the input string is not of the expected form.
+	 	
+	 	A character sequence NAN or NAN(n-char-sequenceopt) is interpreted as a quiet NaN, if
+		supported in the return type, else like a subject sequence part that does not have the expected form;
+		the meaning of the n-char sequence is implementation-defined.298) 
+	 
+	 	298)An implementation may use the n-char sequence to determine extra information to be represented in the NaN’s
+		significand.
+		
+		That that "nondigit" is defined in 6.4.2.1 as
+			nondigit: one of
+				_ a b c d e f g h i j k l m
+				n o p q r s t u v w x y z
+				A B C D E F G H I J K L M
+				N O P Q R S T U V W X Y Z
+			digit: one of
+				0 1 2 3 4 5 6 7 8 9	
+		 On Windows (UCRT) for floats 0XFFC00000 (-NAN) gives "-nan(ind)" [ or -NAN(IND) ] , nanf("") => nan=>0X7FC00000
+	  	*/
+	  	 s+=3;// skip NAN [ which is valid by its self ]
+	  	 const char *sn=s;// we now look forward to see if we have NAN(n-char-sequenceopt)
+	  	 if(*sn=='(')
+	  	 	{// ( optional n-char sequence then )  
+	  	 	 sn++; // skip (
+	  	 	 if(my_tolower(*sn)=='i' && my_tolower(sn[1])=='n' && my_tolower(sn[2])=='d' && sn[3]==')' )
+	  	 	 	{s+=5; // "(ind)" => special case (+5 as we have already skipped the "(" )
+	  	 	 	 if(endptr!=NULL) *endptr=(char *)s;
+	  	 	 	 return -NAN;// this is always -ve
+	  	 	 	}
+	  	 	 // not nan(ind) - look for any other pattern allowed by C99
+	  	 	 while(*sn && *sn!=')' ) ++sn;// for now follow C99 and just look for ), C17 would need a more complex check here
+	  	 	 if(*sn==')') s=sn+1;// found (...) so we have a valid match, +1 to skip final ) [ otherwise just the "NAN" is valid so we don't change s ]
+	  	 	}
+		 if(endptr!=NULL) *endptr=(char *)s;
+	  	 if(sign) return -nan("1");// -NAN would print back as  -nan(ind)
+	  	 return NAN;
+	  	}    
+	  // INF or Infinity is a special case - and is signed
+	  if(my_tolower(*s)=='i' && my_tolower(s[1])=='n' && my_tolower(s[2])=='f')
+	  	{s+=3;// INF
+	  	 if(my_tolower(*s)=='i' && my_tolower(s[1])=='n' && my_tolower(s[2])=='i' && my_tolower(s[3])=='t' && my_tolower(s[4])=='y' )
+	  	  	s+=5; // "Infinity" is 5 more chars (inity) than "inf"
+	  	 if(endptr!=NULL) *endptr=(char *)s;
+	  	 if(sign) return -INFINITY;
+	  	 return INFINITY;
+	  	} 
+	} // if(*s>'9') 
+// at this point we know *s is a digit or a decimal point [ or rather *s is <='9' which includes 0 to 9 and decimal point ]
 #ifdef AFormatSupport 
 	/* support hex floating point numbers of the format 0xh.hhhhp+/-d as generated by printf %a */
   if(*s=='0' && (s[1]=='x' || s[1] =='X'))
@@ -1626,7 +1497,7 @@ __float128 fast_strtof128(const char *s,char **endptr) // if endptr != NULL retu
   	 		{expsign=true;
   	 	 	 ++s;
   	 		}
-  	 	while(isdigit(*s))
+  	 	while(my_isdigit(*s))
 	   		{if(rexp<=FLT128_MAX_EXP)
 		   		rexp=rexp*10+(*s - '0');  // if statement clips at a value that will result in +/-inf but will not overflow int
 		 	 ++s;  
@@ -1650,7 +1521,7 @@ __float128 fast_strtof128(const char *s,char **endptr) // if endptr != NULL retu
 	 ++s;
 	}
   // now read rest of the mantissa	
-  while(isdigit(*s))
+  while(my_isdigit(*s))
   	{ got_number=true; // have a valid number
 	  //if((r & mask_msb128 )==0)
 	  if((and_u2_64(r,mask_msb128)).hi==0)
@@ -1678,7 +1549,7 @@ __float128 fast_strtof128(const char *s,char **endptr) // if endptr != NULL retu
   	 	    }
   	 	}
   	 // now process the rest of the fractional bit of the mantissa
-	 while(isdigit(*s))
+	 while(my_isdigit(*s))
 	 	{got_number=true;
 #if 1	 	
   	 	// see if the whole remaining fractional bit is "0", if so can just skip. This speeds up some conversions (and slows others) but more importantly it ensures 1, 1.0, 1.00 & 1.15, 1.150, 1.1500 etc give exactly the same result
@@ -1687,7 +1558,7 @@ __float128 fast_strtof128(const char *s,char **endptr) // if endptr != NULL retu
 	 		{// got a zero, see if all remaining numbers in mantissa are zero
 	 		 const char *s0=s;
 	 	  	 while(*s0=='0') ++s0;
-	 	  	 if(!isdigit(*s0))
+	 	  	 if(!my_isdigit(*s0))
 	 			{// was all zero's, just skip them
 		 	 	 s=s0;
 		 	 	 break;
@@ -1722,7 +1593,7 @@ __float128 fast_strtof128(const char *s,char **endptr) // if endptr != NULL retu
   	 	{expsign=true;
   	 	 ++s;
   	 	}
-  	 while(isdigit(*s))
+  	 while(my_isdigit(*s))
 	   	{if(rexp<=2*FLT128_MAX_10_EXP)
 		   rexp=rexp*10+(*s - '0');  // if statement clips at a value that will result in +/-inf but will not overflow int
 		 ++s;  
