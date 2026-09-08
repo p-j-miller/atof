@@ -1,7 +1,9 @@
 # atof
 Provides fast versions of the C functions atof(),strtod(),strtof(),strtold() and ,strtof128() which convert strings to floating point numbers.
 
-Version 1.1 provides significantly faster string->double conversion and small speed improvements in the other conversions. All now support NAN(n-char-sequenceopt) - from C99 (and better defined in C17), but "n-char-sequenceopt" is just skipped in the input stream.
+Version 1.1 provides significantly faster string->double conversion and small speed improvements in the other conversions. All now support NAN(n-char-sequenceopt) - from C99 (and better defined in C17), but "n-char-sequenceopt" is just skipped in the input stream. This does not now use Ryu functions as the built in functions are now faster and just as accurate.
+
+Version 1.2 removes the dependency on double-double functions. It uses integer maths instead for long double and __float128 conversions which are now faster (1.1 already did this for doubles).
 
 The following functions are provided:
 ~~~
@@ -36,7 +38,7 @@ It is recommended that these files are installed in a directory called atof-and-
  ~~~
 	ryu - from ya_sprintf (note this has a different license - see ya_sprintf for details) - this is optional and as of version 1v1 is not recommended as its slower than the version that does not use Ryu
 	ya-dconvert from ya-sprintf
-	double-double functions from double-double
+	double-double functions from double-double (not required for version 1.2 and above)
 	128 bit functionality using two uint64_t's from u2_64 
 	power of 10 tables from power10
 	my_printf for debugging from my_printf
