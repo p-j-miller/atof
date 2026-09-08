@@ -1,4 +1,4 @@
-
+﻿
  /* fast_atof by Peter Miller 23/1/2020
     See below for license information.
     
@@ -40,7 +40,7 @@
 				- there seemed to be no reason to keep double-double solution for strtod() other versions were faster so that was also deleted.
 	 25/3/2026  - strtod() conversion updated so its now faster than Ryu (uses dconvert.c/h) 
 				- NAN(n-char-sequenceopt) - from C99 (and better defined in C17) is now supported (but "n-char-sequenceopt" is just skipped in the input stream)
-	 25/3/2026 - ngithub 1v1 release
+	 25/3/2026 - github 1v1 release
 	 
 	 As the name suggests its also written to be fast (much faster than the built in strtod or atof library functions at least for mingw64/UCRT ).
 	 Its round trip exact for doubles/long doubles or float128's  when used with ya_sprintf and the built in sprintf functions 
@@ -96,6 +96,7 @@
  *--------------------------------------------------------------------------*/
 //#define DEBUG
 //#define RYU_I_POWER10 /* if defined use Ryu derived code for I*power10 [ for doubles only] - this is slower now */
+//#define USE_D_D /* if defined use double-double maths, otherwise use "integer" maths in ya_dconvert.c - WARNING - defining this gives errors in the test program and slower execution times! */
 #if defined(DEBUG)
 #define __USE_MINGW_ANSI_STDIO 1   /* if this is defined then writing to stdout > NUL is VERY slow (70 secs vs 4 secs) ! Note strtof() etc are still much slower than fast_atof() etc */
 #include <stdio.h>
@@ -105,12 +106,14 @@
 #include <stdbool.h> /* for bool */
 #include <stdint.h>  /* for int64_t etc */
 #include <math.h>    /* for NAN, INFINITY */
-#include "../double-double/double-double.h"
+#ifdef USE_D_D
+ #include "../double-double/double-double.h" /* not now needed */
+#endif 
 #include <inttypes.h> /* defines PRI64 etc */
 #include <limits.h>
 #include <float.h> /* for limits for float, double , long double */
 #include "atof.h"
-#include "../power10/table_bin_10.h" /* for double powers of 10 tables */
+#include "../power10/table_bin_10.h" /* for double powers of 10 tables, still used as "shortcuts" in fast_strtof() & fast_strtod() */
 #ifdef RYU_I_POWER10
  #include "../ya-sprintf/ryu/s2d_fast_atof.h"
 #else 
@@ -123,6 +126,16 @@
  #define ATOF128 /* if defined add support for reading __float128 's */
 #endif
 
+// note using !!(b) to "force" it to be a boolean seems to result in faster execution times (even when __builtin_expect is not used!)
+// This makes no significant difference to the execution time of fast_strtod()
+#ifdef __GNUC__  /* gcc or clang - not events most be very common/uncommon for this to give performance gains, > 1 in 10,000 is recommended. Use in if statements */
+ #define ya_LIKELY(b) __builtin_expect((!!(b)),1)
+ #define ya_UNLIKELY(b) __builtin_expect((!!(b)),0)
+#else
+ #define ya_LIKELY(b) (!!(b)) /* (!!(b)) appears to be faster than just (b) with gcc 16.1.0 and AMD Ryzen 5 processor */
+ #define ya_UNLIKELY(b) (!!(b))
+#endif
+ 
 #define nos_elements_in(x) (sizeof(x)/(sizeof(x[0]))) /* number of elements in x , max index is 1 less than this as we index 0... */
 
 static inline bool my_isdigit(char x) /* hopefully faster than isdigit() - but as importantly only returns true for 0..9 whereas isdigit could in theory change with the locale set */ 
@@ -136,9 +149,11 @@ static inline char my_tolower(char x) /* this only works on letters (but it will
 /* code below cannot be compiled with -Ofast as this makes the compiler break some C rules that we need, so make sure of this here */
 /* we also need -msse2 and -mfpmath=sse to actually use the sse instructions for float and double maths */
 /* there seems to be no way to duplicate "-fexcess-precision=standard" using a pragma - so that must be present on the command line - to pass all f128_to_a tests -fexcess-precision=standard MUST be present on the command line with -Ofast */
-#if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7)) || defined(__clang__)
- #pragma GCC push_options
- #pragma GCC optimize ("-O3") /* cannot use Ofast, normally -O3 is OK. Note macro expansion does not work here ! */
+#if ( (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7)) || defined(__clang__) ) && !defined(__BORLANDC__)
+ #if  !defined(__BORLANDC__)
+  #pragma GCC push_options
+  #pragma GCC optimize ("-O3") /* cannot use Ofast, normally -O3 is OK. Note macro expansion does not work here ! */
+ #endif
  // based on  https://jdebp.uk/FGA/predefined-macros-processor.html "__i386__" is set by GCC,Clang,Intel which is good enough as the outer #if limits us to gcc and clang
  #ifdef __i386__
    #pragma GCC target("sse2,fpmath=sse") /* -msse2 and -mfpmath=sse */
@@ -252,7 +267,7 @@ static const uint32_t u32powersOf10[]=
 #ifdef DEBUG
   fprintf(stderr,"strtod(%s):\n",s);
 #endif   
-  if(s==NULL) return NAN; 
+  if(ya_UNLIKELY(s==NULL)) return NAN; 
   while(isspace(*s)) ++s; // skip initial whitespace	
   // deal with leading sign
   if(*s=='+') ++s;
@@ -261,7 +276,7 @@ static const uint32_t u32powersOf10[]=
   	 ++s;
     }
   // this is the critical path - if the character is >'9' then it starts with a letter [ nan, inf ], note '.' is < '9'
-  if(*s>'9') 
+  if(ya_UNLIKELY(*s>'9')) 
   	{// not a digit - work out what we have [off the critical path]
 	  // NAN is a special case - NAN is  signed in the input and keeps this on the output
 	  if(my_tolower(*s)=='n' && my_tolower(s[1])=='a' && my_tolower(s[2])=='n')
@@ -398,18 +413,36 @@ static const uint32_t u32powersOf10[]=
 	 return h; // all done 	
 	}
 #endif	
-  // skip leading zeros
-  while(*s=='0')
-  	{got_number=true; // have a number (0)
+#if 1
+  if(*s=='0')
+  	{got_number=true; // have a number (1st digit is 0)
 	 ++s;
+	 // skip any extra leading zeros
+	 while(*s=='0') ++s;
+	 // do not special case 1st non-zero digit as we do not expect numbers like 01, after a leading zero we expect a decimal point (e.g. 0.123)
+	 // note we have set got_number=true so if digits do follow the code will work 
 	}
- if(my_isdigit(*s))
+ else if(ya_LIKELY(my_isdigit(*s)))
  	{// deal with 1st significant digit of mantissa. special case, moves got_number=true; out of the while loop below and saves a multiply in setting r
  	 got_number=true; // have a valid number
 	 r=(*s-'0');
 	 nos_mant_digits=1;
 	 ++s;
 	}
+#else
+  // skip leading zeros
+  while(*s=='0')
+  	{got_number=true; // have a number (0)
+	 ++s;
+	}
+ if(ya_LIKELY(my_isdigit(*s)))
+ 	{// deal with 1st significant digit of mantissa. special case, moves got_number=true; out of the while loop below and saves a multiply in setting r
+ 	 got_number=true; // have a valid number
+	 r=(*s-'0');
+	 nos_mant_digits=1;
+	 ++s;
+	}
+#endif
   // now read rest of the mantissa	
   while(my_isdigit(*s))
   	{ 
@@ -465,7 +498,7 @@ static const uint32_t u32powersOf10[]=
 		}
  	}
   // got all of mantissa - see if its a valid number, if not we are done
-  if(!got_number)
+  if(ya_UNLIKELY(!got_number))
  	{if(endptr!=NULL) *endptr=(char *)se;
 #ifdef DEBUG
  	fprintf(stderr," strtod returns 0 (invalid number)\n"); 
@@ -867,7 +900,7 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
  	 else return (float) r;
 	}
  // calculate dr=r*pow(10,rexp), but by using a lookup table of powers of 10 for speed and using doubles to ensure accuracy.
- if(rexp>0)
+ else if(rexp>0)
  	{
 	 if(rexp+nos_mant_digits<=9)
 	 	{// optimisation: can do all calculations using uint32 which is exact and fast	 
@@ -889,7 +922,7 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
  		}
  	 dr=(double)r*PosPowerOf10_hi[rexp]; // as mantissa >= 1 this may overflow, but thats OK. Array is in table_bin_10.h
 	}
- else if(rexp<0)
+ else // if(rexp<0)    - leaving if here gives a clang warning that dr may be used without being initialised , but we only need else as rexp==0 & rexp>0 have already been covered
  	{// need to take care here as mantissa is > 1 so even dividing by 10^maxfExponent may not be enough, but here we use doubles which have a much wider exponent range so its not an issue
  	 rexp=-rexp;
  	 /* divide by powers of 10 (as doubles) => this gives 0 errors (I tried multiplying by 1/10^exp but this gave 2 round trip errors ) */
@@ -950,7 +983,6 @@ float fast_strtof(const char *s,char **endptr) // if endptr != NULL returns 1st 
 long double fast_strtold(const char *s,char **endptr) // if endptr != NULL returns 1st character thats not in the number
  {
   long double dr;
-  long double rh,rl; // double double result  
   bool sign=false,expsign=false,got_number=false; 
   u2_64 r={0,0}; // mantissa
   u2_64 mask_msb128={0,0x0f};
@@ -1151,7 +1183,7 @@ long double fast_strtold(const char *s,char **endptr) // if endptr != NULL retur
   	 // now process the rest of the fractional bit of the mantissa
 	 while(my_isdigit(*s))
 	 	{got_number=true;
-#if 1	 	
+#if 0   /* "0" is faster and gives the same results as "1" with the test program so "0" is recommended */	 	
   	 	// see if the whole remaining fractional bit is "0", if so can just skip. This speeds up some conversions (and slows others) but more importantly it ensures 1, 1.0, 1.00 & 1.15, 1.150, 1.1500 etc give exactly the same result
 		 
 	 	 if(*s=='0')
@@ -1212,9 +1244,16 @@ long double fast_strtold(const char *s,char **endptr) // if endptr != NULL retur
 	 if(sign) return -LDBL_MAX;
 	 return LDBL_MAX;
 	} 
+#ifndef USE_D_D
+ // use long double ya_conv_mant_exp_to_longdouble(bool signedM,u2_64 m10,int32_t dec_exp) from ya_dconvert.c , this is faster (only 1% faster overall in complete ya_sprintf tests) and gives the same results
+ // this option gives identical results to using fast_strtof128() in the LD test program (CHK_LD), but slightly different results to using the conversion below (using double-double long doubles) [ even though both pass the test program ]
+ // This is therefore the recommended option.
+ return ya_conv_mant_exp_to_longdouble(sign,r,rexp);
+#else
  // now we need to convert r into a double-double long double and (eventually) multiply by 10^rexp
  // this needs to be done in blocks of 32 bits due to the limited size of the LD mantissa.
  // I have tried simpler solutions and they introduce errors!
+ long double rh,rl; // double double result  
  long double r1h,r1l,r2h,r2l;
  uint64_t l32,h32; // low and high 32 bits of  64 bits
  uint64_t c63=((uint64_t)1) << 63; // biggest shift possible with u64
@@ -1274,6 +1313,7 @@ long double fast_strtold(const char *s,char **endptr) // if endptr != NULL retur
 #endif 
 
  return dr; 
+#endif
 }
 
 #else // not true LD , ie double==long double
@@ -1351,7 +1391,6 @@ typedef __float128 f128_t;
 __float128 fast_strtof128(const char *s,char **endptr) // if endptr != NULL returns 1st character thats not in the number
  {
   f128_t dr;
-  f128_t rh,rl; // double double result  
   bool sign=false,expsign=false,got_number=false; 
   u2_64 r={0,0}; // mantissa
   u2_64 mask_msb128={0,0x0f};
@@ -1551,7 +1590,7 @@ __float128 fast_strtof128(const char *s,char **endptr) // if endptr != NULL retu
   	 // now process the rest of the fractional bit of the mantissa
 	 while(my_isdigit(*s))
 	 	{got_number=true;
-#if 1	 	
+#if 1 /* if this is 0 we get a few errors in the test program, eg 1.00e+3952  */	 	
   	 	// see if the whole remaining fractional bit is "0", if so can just skip. This speeds up some conversions (and slows others) but more importantly it ensures 1, 1.0, 1.00 & 1.15, 1.150, 1.1500 etc give exactly the same result
 		 
 	 	 if(*s=='0')
@@ -1609,6 +1648,10 @@ __float128 fast_strtof128(const char *s,char **endptr) // if endptr != NULL retu
 		 if(sign) return -FLT128_MAX;
  		 return FLT128_MAX;
  		}
+#ifndef USE_D_D // use __float128 ya_conv_mant_exp_to_f128(bool signedM,u2_64 m10,int32_t dec_exp)
+ dr=ya_conv_mant_exp_to_f128(sign,r,rexp);
+#else
+ f128_t rh,rl; // double double result  
  u2_64toDD_f128(r,&rh,&rl);	// convert r to dd
  // void f128_to_power10(__float128 *rh,__float128 *rl, __float128 rin_h, __float128 rin_l, int32_t rexp );  // rh/rl=rin_h/l*10^rexp  rexp can be +/- 
  f128_mult_power10(&dr,&rl,rh,rl,rexp); // result "hi" to dr
@@ -1618,13 +1661,13 @@ __float128 fast_strtof128(const char *s,char **endptr) // if endptr != NULL retu
  // This is the normal return 
  fprintf(stderr," strtof128 returns %.18g (rexp=%d, exp=%d)\n",(double)dr,rexp,exp); 
 #endif 
-
+#endif
  return dr; 
 }
 
 #endif // if defined ATOF128
 
 /* now restore gcc options to those set by the user */
-#if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7)) || defined(__clang__)
-#pragma GCC pop_options
+#if ((__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7)) || defined(__clang__) )  && !defined(__BORLANDC__)
+ #pragma GCC pop_options
 #endif
